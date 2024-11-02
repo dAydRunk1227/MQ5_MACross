@@ -1,0 +1,6 @@
+Framework EA/
+.vscode/
+*.log
+.DS_Store
+*.ex5
+AllSymbolsSample.mq5
