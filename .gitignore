@@ -4,3 +4,18 @@ Framework EA/
 .DS_Store
 *.ex5
 AllSymbolsSample.mq5
+Files/
+Images/
+Include/
+Indicators/
+Libraries/
+Logs/
+Profiles/
+Scripts/
+Services/
+Shared Projects/
+*.dat
+Experts/Advisors/
+Experts/Examples/
+Experts/Free Robots/
+Experts/TestGenerate/
