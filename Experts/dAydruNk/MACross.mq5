@@ -100,7 +100,7 @@
    // #define dbgCloseSignal
    // #define dbgTickCnt
    // #define dbgcheckNoOrders
-    #define dbgTrailingStop
+   // #define dbgTrailingStop
 // -- -- Declarations -- -- //
     // -- -- Classes -- -- //
         CHistoryOrderInfo ChisOrInfo;       // Declare class
