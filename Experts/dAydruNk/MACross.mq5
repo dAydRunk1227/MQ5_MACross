@@ -4,7 +4,7 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "2.5"
+#property version   "2.6"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
@@ -184,12 +184,6 @@
                 int         orderCount;
                 };
             sOpenOrders OpenOrders;
-            struct sTrailingStopData {
-                double sl1, sl2, tp1, tp2; 
-                ulong position;
-                string comment;
-                };
-            sTrailingStopData sTrailingStop;
     // -- -- Arrays -- -- //
         // All symbols
             ulong    OpenTradeOrderTicket[];    //To store 'order' ticket for trades
@@ -204,7 +198,6 @@
             sDealsData  dealsData[];               // Array to store sDealData structure for write to file
         // To track orders on a single bar
             sOpenOrders bOpenOrders[];              // See Structure sOpenOrders
-            sTrailingStopData bsTrailingStop[];     // See Structure sOpenOrders
     // -- -- Variables -- -- //
         // -- -- Common Variables -- -- //
             input int   iMagic;         //  Magic Number        
@@ -213,9 +206,7 @@
                 input group "Trade"
                 input double iMaxOrder              = 2;     //  Max % of account value allowed
                 input int    iVolFactor             = 1;     //  Min 1 max 10
-                input bool   runOnOFF               = true; // Allow running orders
                 input int    iAllowedTradesOnBar    = 2;     // No. of trades allowed per bar (must agree with running orders)
-                input bool   iTrailingStopOnOFF     = true;
             // Working
                 string tradeCommentBuy1  =  "Buy w/ TP";        //  Sets buy trade comment to distinguish cale out
                 string tradeCommentBuy2  =  "Buy, Running";     //  Sets buy trade comment to distinguish runner
@@ -383,15 +374,6 @@
         writeorderData();
         Print("OnTester Stats 2 Successful");
         return(ret);
-        }
-// -- -- OnTradeTransaction -- -- //
-    void  OnTradeTransaction( const MqlTradeTransaction& trans, const MqlTradeRequest& request, const MqlTradeResult& result ) {
-        #ifdef dbgTrailingStop Print("Trailing stop function called"); #endif
-                MqlTradeTransaction mTrans   = trans;
-                MqlTradeRequest     mRequest = request;
-                MqlTradeResult      mResult  = result;
-
-        trailingStop(mTrans, mRequest, mResult);
         }
 // -- -- Expert deinitialization function -- -- //
     void OnDeinit(const int reason) {   // *** Are these used???? 
@@ -743,156 +725,23 @@
             return(false);
             }         
         void orderBuy(double tp, double sl, double vol, string Symbol) {               //  See void placeOrder()
-            bool   tradeSuccess =   true;
+            
             double mBid     =   SymbolInfoDouble(Symbol, SYMBOL_BID);
             double mVol     =   NormalizeDouble((vol/2), 2);
-            int    cnt      =   0;
-            string time     =   TimeToString(TimeCurrent(), TIME_DATE);
-            bool   trades   =   false;
 
-            trades = checkNumOpenOrders(Symbol, iAllowedTradesOnBar);
-            if( trades == true) {
-                tradeSuccess = trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, tp, tradeCommentBuy1);
-                
-                if( tradeSuccess == true) { 
-                    cnt++;
-                    if(runOnOFF == true) {
-                        tradeSuccess = trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, NULL, tradeCommentBuy2);
-                        if( tradeSuccess == true ) { cnt++; Print("1 trades placed, open trades array updated"); } 
-                            else { Print("Running buy order fail"); }
-                        }
-                    checkNoOrdersDataCapture(Symbol, time, cnt);
-                    Print("2 trades placed, open trades array updated");
-                    } else { Print("orderBuy Fail", " Error: ", GetLastError() ); }
-                } else { Print("No of Allowed trades for this bar already opened. No Buy Allowed"); }
+            if( trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, tp, tradeCommentBuy1) ) { return; }
+                else { Print("orderBuy Fail", " Error: ", GetLastError() ); }
             } 
+
         void orderSell(double tp, double sl, double vol, string Symbol) {              //  See void placeOrder()
-            bool   tradeSuccess =   true;
+            
             double mAsk         =   SymbolInfoDouble(Symbol, SYMBOL_ASK);
             double mVol         =   NormalizeDouble((vol/2),2);
-            int    cnt          =   0;
-            string time         =   TimeToString(TimeCurrent(), TIME_DATE);
-
-             
-                tradeSuccess = trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, tp, tradeCommentSell1);
-                if( tradeSuccess == true) { 
-                    cnt++;
-                    if(runOnOFF == true) {
-                        tradeSuccess = trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, NULL, tradeCommentSell2);
-                        if( tradeSuccess == true ) { cnt++; } else { Print("Running sell order fail"); }
-                        }
-                    checkNoOrdersDataCapture(Symbol,time, cnt);
-                    } else { Print( "orderSell Fail", " Error: ", GetLastError() ); }
-                
-            }
-        void trailingStop( MqlTradeTransaction& trans, MqlTradeRequest& request, MqlTradeResult& result ) {
             
-            if(iTrailingStopOnOFF == true ) {
-                #ifdef dbgTrailingStop Print("deal | order | position | symbol | price_trig | Reason | order_type | deal_type ");
-                    PrintFormat("%.2g | %.2g | %.2g | %.6s | %s | %s | %s | %s ", 
-                    trans.deal, trans.order, trans.position, trans.symbol, EnumToString((ENUM_ORDER_TYPE)trans.price_trigger),  
-                    EnumToString((ENUM_ORDER_REASON)HistoryDealGetInteger(trans.deal, DEAL_REASON)), EnumToString(trans.order_type), 
-                    EnumToString(trans.deal_type));
-                    #endif
-           
-                double TPmulti              = iTPmultiplier;
-                double SLmulti              = iSLmultiplier;
-                ENUM_ORDER_TYPE order_type  = trans.order_type;
-                ENUM_DEAL_TYPE deal_type    = trans.deal_type; 
-                
-                if( (order_type == ORDER_TYPE_BUY && deal_type == DEAL_TYPE_SELL) || (order_type == ORDER_TYPE_SELL && deal_type == DEAL_TYPE_BUY) ) {
-                    #ifdef dbgTrailingStop 
-                    Print("order_Type: ", order_type, " deal_type: ", deal_type);
-                    Print("closed Position: ", trans.position, " Position Select for mod: ", trans.position+1); #endif
-                    
-                    int arraySize =  ArrayResize(bsTrailingStop, ArraySize(bsTrailingStop)+1);
-                    #ifdef dbgTrailingStop Print("TrailingStop Array New Size: ", arraySize); #endif
-
-                    ulong pos = trans.position+1;
-                    PositionSelectByTicket(pos);
-                    string posSym               =   PositionGetString(POSITION_SYMBOL);
-                    string posComment           =   PositionGetString(POSITION_COMMENT);
-                    ulong  posMagic             =   PositionGetInteger(POSITION_MAGIC);
-                    ENUM_POSITION_TYPE posType  =   (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-                    int    posDigits            =   (int)SymbolInfoInteger(posSym, SYMBOL_DIGITS);
-                    double tp1                  =   PositionGetDouble(POSITION_TP);
-                    double sl1                  =   PositionGetDouble(POSITION_SL);
-                    double posVol               =   PositionGetDouble(POSITION_VOLUME);
-                    double tp2                  =   0;
-                    double sl2                  =   0;
-                    bool verifyPos;
-                   
-                   if( posMagic == iMagic && posSym == trans.symbol && (posComment == tradeCommentBuy2 || posComment == tradeCommentSell2) ) { verifyPos = true; } else { verifyPos = false; }
-                   
-                    if( verifyPos == true) {
-                
-                            #ifdef dbgTrailingStop                                 
-                                PrintFormat("TrailStop Pos Verification SUCCEED -- %g | #%I64u | %s | %s | %.2f | %s | sl-1: %s | tp-1: %s | %s",
-                                verifyPos, pos, posSym, EnumToString(posType), posVol, DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), posDigits),
-                                DoubleToString(sl1,posDigits), DoubleToString(tp1,posDigits), posComment); 
-                                #endif 
-
-                        // Set new TP/SL     
-                            double bATR[];
-                            ArraySetAsSeries(bATR, true);
-                            double mhandle_ATR  =  iATR(posSym, iATRtf, iATRperiod ); 
-                            int copyBuffer = CopyBuffer( mhandle_ATR, 0, 0, 1, bATR );
-                            
-                            double mAsk         =   SymbolInfoDouble(posSym, SYMBOL_ASK);
-                            double mBid         =   SymbolInfoDouble(posSym, SYMBOL_BID);
-                            
-                            int    mDigits  =   posDigits;  
-
-                            double newTP = 0; double newSL = 0;       // Ensure values at 0 to start
-
-                            if      (copyBuffer < 1 ) {                
-                                Print("Trailing Stop ATR Create error: ", GetLastError());
-                                }
-
-                            else if ( posComment == tradeCommentBuy2 ) {
-                                tp2 = mAsk + (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
-                                sl2 = mAsk - (NormalizeDouble(bATR[0], mDigits)*SLmulti);
-                                #ifdef dbgTrailingStop Print("NEW TPSL :: Ask: ", NormalizeDouble(mAsk, mDigits), " ATR Value: ", NormalizeDouble(bATR[0], mDigits), " TP value: ", tp2, " SL value: ", sl2); #endif
-                                }
-
-                            else if ( posComment == tradeCommentSell2 ) {
-                                tp2 = mBid - (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
-                                sl2 = mBid + (NormalizeDouble(bATR[0], mDigits)*SLmulti);
-                                #ifdef dbgTrailingStop Print("NEW TPSL :: Ask: ", mBid, " ATR Value: ", NormalizeDouble(bATR[0], mDigits), " TP value: ", tp2, " SL value: ", sl2); #endif
-                                }
-                        // Zero requset and result values
-                        ZeroMemory(request);
-                        ZeroMemory(result);
-                        // Setting operation parameters - Update SL and TP
-                        request.action      = TRADE_ACTION_SLTP;
-                        request.position    = pos;
-                        request.symbol      = posSym;
-                        request.sl          = sl2;
-                        request.tp          = tp2;
-                        request.magic       = posMagic;
-
-                        //--- output information about the modification
-                        PrintFormat("Modify #%I64d %s %s",pos, posSym, EnumToString(posType));
-                        //--- send the request
-                        if(!OrderSend(request, result))
-                            PrintFormat("OrderSend error %d",GetLastError());  // if unable to send the request, output the error code
-                        //--- information about the operation   
-                            PrintFormat("retcode=%u  deal=%I64u  order=%I64u",result.retcode,result.deal,result.order);
-                        } else {  #ifdef dbgTrailingStop                                 
-                                    PrintFormat("TrailStop Pos Verification FAIL -- %g | #%I64u | %s | %s | %.2f | %s | sl-1: %s | tp-1: %s | %s",
-                                    verifyPos, pos, posSym, EnumToString(posType), posVol, DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), posDigits),
-                                    DoubleToString(sl1,posDigits), DoubleToString(tp1,posDigits), posComment); 
-                                    #endif
-                            }
-                   } else Print("No Trail Stop For Now");
-                } 
+            if( trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, tp, tradeCommentSell1) ) { return; }
+                else { Print( "orderSell Fail", " Error: ", GetLastError() ); }
             }
-        void trailingStopArrayMaintenance () {
-                int arraySize =  ArrayResize(bsTrailingStop, ArraySize(bsTrailingStop)+1);
-                #ifdef dbgTrailingStop Print("TrailingStop Array New Size: ", arraySize); #endif
-            
-            }
-            
+
     // -- -- Signals -- -- //
         ETRADESIGNAL checkForOpenSignal(int SymbolLoop, string& signalDiagnosticMetrics)    {
             string CurrentSymbol = SymbolArray[SymbolLoop];
@@ -1054,32 +903,7 @@
                 #ifdef dbgCheckTimeRange PrintFormat("Func: %s, CrntTime: %d, SignalPass: $d", 
                                                     __FUNCSIG__, mNow, chkTRPass); #endif    
             }                
-        bool checkNumOpenOrders(string sym, int numTrades)    {             // Checks that the current bar has not had more than 2 orders placed on it
-            
-            string  mSym    = sym;
-            string  cTime   = TimeToString(TimeCurrent(), TIME_DATE);
-            bool    res = true;
-            
-            for(int i=0; i < ArraySize(bOpenOrders); i++) {
-                if( bOpenOrders[i].symb == mSym ) {
-                    if( bOpenOrders[i].barOpenDate == cTime ) {
-                        if( bOpenOrders[i].orderCount < numTrades ) { res = true; #ifdef dbgcheckNoOrders Print("index: ", i, " | TradesRst: ", res, " | ArraySize: ", ArraySize(bOpenOrders)); ArrayPrint(bOpenOrders); #endif }     // Allow Trades
-                            else { res = false; Print( "Index ", i, " failed at check TradesNo. ", "| ArraySize: ", ArraySize(bOpenOrders)); break; }    // Max number of trades reached, no trades allowed
-                        }
-                        else {res = false; ArrayRemove(bOpenOrders, i, 1); #ifdef dbgcheckNoOrders Print( "Index ", i, " failed at check Time. ", "| ArraySize: ", ArraySize(bOpenOrders)); ArrayPrint(bOpenOrders); #endif break; } // if new bar, remove the data for this symbol
-                    }
-                }
-                return res;
-            } 
 
-        void checkNoOrdersDataCapture (string sym, string time, int &orderCnt ) {
-                int i = ArraySize(bOpenOrders);
-                int t = i+1;
-                ArrayResize(bOpenOrders,t);
-                bOpenOrders[i].symb = sym;
-                bOpenOrders[i].barOpenDate = time;
-                bOpenOrders[i].orderCount = orderCnt;
-            }
     // -- -- Working Functions  -- -- //
         bool IsNewBar() {
             return(false);
