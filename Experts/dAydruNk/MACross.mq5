@@ -10,6 +10,7 @@
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V2.6 (24-1110) Scarp current trailing stop method for single trade with partial close
     - V2.5 (24-1102)
         -   Template EA
     - V2.41 (24-1102)
