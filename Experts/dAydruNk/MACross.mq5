@@ -8,10 +8,9 @@
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
+    - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
-    - V2,51 (24-1103)
-        - Tweak trailing stop to set new stoploss at previous exit to limit loss
-    - V2.5  (24-1102)
+    - V2.5 (24-1102)
         -   Template EA
     - V2.41 (24-1102)
         - Reorganized formatting of declarations by category and then use
@@ -104,9 +103,9 @@
     #define dbgTrailingStop
 // -- -- Declarations -- -- //
     // -- -- Classes -- -- //
-        CHistoryOrderInfo ChisOrInfo;       // Class Declaration
-        CTrade trade;                       // Take advantae of existing trade tools. Used for to set expert magic number and open positions 
-        CPositionInfo positionInfo;         // Class Declaration
+        CHistoryOrderInfo ChisOrInfo;       // Class Declaration.
+        CTrade trade;                       // Class Declaration. Take advantae of existing trade tools. Used for to set expert magic number and open positions   
+        CPositionInfo positionInfo;         // Class Declaration.
     // -- -- Enums -- -- //
         // Trade
             enum ETRADESIGNAL   {
@@ -211,15 +210,11 @@
         // -- -- Trade Variables -- -- //
             // Inputs
                 input group "Trade"
-                input double iMaxOrder              = 2;        //  Max % of account value allowed
-                input int    iVolFactor             = 1;        //  Min 1 max 10
-                input bool   runOnOFF               = true;     // Allow running orders
-                input int    iAllowedTradesOnBar    = 2;        // No. of trades allowed per bar (must agree with running orders)
+                input double iMaxOrder              = 2;     //  Max % of account value allowed
+                input int    iVolFactor             = 1;     //  Min 1 max 10
+                input bool   runOnOFF               = true; // Allow running orders
+                input int    iAllowedTradesOnBar    = 2;     // No. of trades allowed per bar (must agree with running orders)
                 input bool   iTrailingStopOnOFF     = true;
-                input double iTPmultiplier          = 2.5;      // Multiplier for TP
-                input double iSLmultiplier          = 1;        // Multiplier for SL 
-                input double iTrailingTPMulti       = 1.5;      // TP for running trade
-                input double iTrailingSLMulti       = 1.5;      // SL for running trade            
             // Working
                 string tradeCommentBuy1  =  "Buy w/ TP";        //  Sets buy trade comment to distinguish cale out
                 string tradeCommentBuy2  =  "Buy, Running";     //  Sets buy trade comment to distinguish runner
@@ -240,7 +235,8 @@
             //  ATR -- StopLoss & TakeProfit
                 // Inputs
                 input group "ATR Parameters"
-
+                input double            iTPmultiplier   = 2.5;  // Multiplier for TP
+                input double            iSLmultiplier   = 1;    // Multiplier for SL 
                 input ENUM_TIMEFRAMES   iATRtf          = 0;    // ATR Timeframe (0=current chart)
                 input int               iATRperiod      = 14;   // ATR Calculated Period   
             
@@ -344,7 +340,9 @@
     void OnTick()   {
 
         TicksReceivedCount++;
-        #ifdef dbgTickCnt Print(TicksReceivedCount); #endif
+        #ifdef dbgTickCnt Comment(TicksReceivedCount); 
+            int tick = 0;
+            if( tick != 0 && TicksReceivedCount == tick ) DebugBreak(); #endif
         string indicatorMetrics = "";
       
 
@@ -789,26 +787,22 @@
         void trailingStop( MqlTradeTransaction& trans, MqlTradeRequest& request, MqlTradeResult& result ) {
             
             if(iTrailingStopOnOFF == true ) {
-                #ifdef dbgTrailingStop Print("deal# | order# | position# | symbol | price_trig | Reason | order_type | deal_type ");
+                #ifdef dbgTrailingStop Print("deal | order | position | symbol | price_trig | Reason | order_type | deal_type ");
                     PrintFormat("%.2g | %.2g | %.2g | %.6s | %s | %s | %s | %s ", 
                     trans.deal, trans.order, trans.position, trans.symbol, EnumToString((ENUM_ORDER_TYPE)trans.price_trigger),  
                     EnumToString((ENUM_ORDER_REASON)HistoryDealGetInteger(trans.deal, DEAL_REASON)), EnumToString(trans.order_type), 
                     EnumToString(trans.deal_type));
                     #endif
            
-                double TPmulti              = iTrailingTPMulti;
-                double SLmulti              = iTrailingSLMulti;
-                double posPriceCurrent      = positionInfo.PriceCurrent();
-                double posOrderPriceOpen    = positionInfo.PriceOpen();
+                double TPmulti              = iTPmultiplier;
+                double SLmulti              = iSLmultiplier;
                 ENUM_ORDER_TYPE order_type  = trans.order_type;
                 ENUM_DEAL_TYPE deal_type    = trans.deal_type; 
                 
-                if( ( order_type == ORDER_TYPE_BUY && deal_type == DEAL_TYPE_SELL && posPriceCurrent > posOrderPriceOpen ) || 
-                    ( order_type == ORDER_TYPE_SELL && deal_type == DEAL_TYPE_BUY  && posPriceCurrent < posOrderPriceOpen) ) {
-                    
+                if( (order_type == ORDER_TYPE_BUY && deal_type == DEAL_TYPE_SELL) || (order_type == ORDER_TYPE_SELL && deal_type == DEAL_TYPE_BUY) ) {
                     #ifdef dbgTrailingStop 
-                    Print("order_Type: ", order_type, " deal_type: ", deal_type, "Position Open Price: ", NormalizeDouble(posOrderPriceOpen, _Digits)," Positions Current Price: ", NormalizeDouble(posPriceCurrent, _Digits));
-                    Print("closed Position: ", trans.position, " Selected Position ", trans.position+1, " for modification."); #endif
+                    Print("order_Type: ", order_type, " deal_type: ", deal_type);
+                    Print("closed Position: ", trans.position, " Position Select for mod: ", trans.position+1); #endif
                     
                     int arraySize =  ArrayResize(bsTrailingStop, ArraySize(bsTrailingStop)+1);
                     #ifdef dbgTrailingStop Print("TrailingStop Array New Size: ", arraySize); #endif
@@ -884,7 +878,7 @@
                         //--- information about the operation   
                             PrintFormat("retcode=%u  deal=%I64u  order=%I64u",result.retcode,result.deal,result.order);
                         } else {  #ifdef dbgTrailingStop                                 
-                                    PrintFormat("TrailStop Pos Verification SUCCEED -- %g | #%I64u | %s | %s | %.2f | %s | sl-1: %s | tp-1: %s | %s",
+                                    PrintFormat("TrailStop Pos Verification FAIL -- %g | #%I64u | %s | %s | %.2f | %s | sl-1: %s | tp-1: %s | %s",
                                     verifyPos, pos, posSym, EnumToString(posType), posVol, DoubleToString(PositionGetDouble(POSITION_PRICE_OPEN), posDigits),
                                     DoubleToString(sl1,posDigits), DoubleToString(tp1,posDigits), posComment); 
                                     #endif
