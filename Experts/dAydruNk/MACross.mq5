@@ -10,7 +10,10 @@
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
-    - V2.6 (24-1110) Scarp current trailing stop method for single trade with partial close
+    - V2.6 (24-1110) Scrap current trailing stop method for single trade with partial close.
+        - Add checkUpdatePosition();
+        - Add Trade input "iTrailingON" to allow running orders or enter trades with single TP and SL
+        - Remove iAllowedTradesOnBar as it was deprecated somewhere and has no purpose.
     - V2.5 (24-1102)
         -   Template EA
     - V2.41 (24-1102)
@@ -82,6 +85,7 @@
 // -- -- Include -- -- //
     #include <Trade\Trade.mqh>
     #include <Trade\PositionInfo.mqh>
+    #include <Trade\SymbolInfo.mqh>
     #include <StdLibErr.mqh>
     ;
 
@@ -99,14 +103,16 @@
    // #define dbgMACD
    // #define dbgOpenSignal
    // #define dbgCloseSignal
-   // #define dbgTickCnt
+    #define dbgTickCnt
+   // #define dbgOpenOrder
    // #define dbgcheckNoOrders
-    #define dbgTrailingStop
+    #define dbgcheckUpdatePosition
 // -- -- Declarations -- -- //
     // -- -- Classes -- -- //
         CHistoryOrderInfo ChisOrInfo;       // Class Declaration.
         CTrade trade;                       // Class Declaration. Take advantae of existing trade tools. Used for to set expert magic number and open positions   
         CPositionInfo positionInfo;         // Class Declaration.
+        CSymbolInfo symbolInfo;             // Class Declaration
     // -- -- Enums -- -- //
         // Trade
             enum ETRADESIGNAL   {
@@ -151,7 +157,7 @@
                 long                dealMagic;      // Deal magic number (see ORDER_MAGIC)
                 long                orderNoDl;      // Deal order number
                 long                positionIDDl;   // Identifier of a position, in the opening, modification or closing of which this deal took part. Each position has a unique identifier that is assigned to all deals executed for the symbol during the entire lifetime of the position.
-                long                ticketDl;       // Deal ticket. Unique number assigned to each deal
+                ulong               ticketDl;       // Deal ticket. Unique number assigned to each deal
                 string              commentDl;      // Deal comment
                 string              symDl;          // Deal symbol
                 };
@@ -177,13 +183,15 @@
                     double  expectedPayoff;     // Expected payoff
                     };
             sTestStats StestStats;
-        // To track orders on a single bar
-            struct sOpenOrders {
-                string      symb;
-                string      barOpenDate;
-                int         orderCount;
+        // Position Info
+            struct sPos {
+                double      tp;
+                int         symbolLoop;
+                long        posID;
+                datetime    lastPosUpdate;
+                bool        isTrailing;          // flag to control tp updating after partial position close
                 };
-            sOpenOrders OpenOrders;
+
     // -- -- Arrays -- -- //
         // All symbols
             ulong    OpenTradeOrderTicket[];    //To store 'order' ticket for trades
@@ -193,24 +201,24 @@
             int handle_MASlow[];    // Moving Average Slow, Stores handles for all symbols to use
             int handle_ATR[];       // Stores ATR handle for All Symbols  
             // int handle_MACD[];  // Stores MACD handle for All Symbols
-        // Order Data
+        // Order & Positions Data
             sOrdersData ordersData[];              // Array to store sOrderData structure for write to file
             sDealsData  dealsData[];               // Array to store sDealData structure for write to file
-        // To track orders on a single bar
-            sOpenOrders bOpenOrders[];              // See Structure sOpenOrders
+            sPos        bsPos[];                   // Array to store order info for checking if orders need update
     // -- -- Variables -- -- //
         // -- -- Common Variables -- -- //
-            input int   iMagic;         //  Magic Number        
+            input int   iMagic;                 //  Magic Number
+            int         TicksReceivedCount = 0; //  Track tick number to assist in debugging.  See first line of OnTick and update in orderBuy() and orderSell().     
         // -- -- Trade Variables -- -- //
             // Inputs
                 input group "Trade"
-                input double iMaxOrder              = 2;     //  Max % of account value allowed
-                input int    iVolFactor             = 1;     //  Min 1 max 10
-                input int    iAllowedTradesOnBar    = 2;     // No. of trades allowed per bar (must agree with running orders)
+                input bool      iTrailingON = false; //  Toggle trailing stop On/Off    
+                input double    iMaxOrder   = 2;     //  Max % of account value allowed
+                input int       iVolFactor  = 1;     //  Min 1 max 10
             // Working
-                string tradeCommentBuy1  =  "Buy w/ TP";        //  Sets buy trade comment to distinguish cale out
+                string tradeCommentBuy1  =  "OrderSend";        //  Sets buy trade comment to distinguish cale out
                 string tradeCommentBuy2  =  "Buy, Running";     //  Sets buy trade comment to distinguish runner
-                string tradeCommentSell1 =  "Sell w/ TP";       //  Sets sell trade comment to distinguish cale out
+                string tradeCommentSell1 =  "OrderSend";       //  Sets sell trade comment to distinguish cale out
                 string tradeCommentSell2 =  "Sell, Running";    //  Sets sell trade comment to distinguish runner
                 
                 double volumeBuyPass;   //  used to store calculated buy trade volume for order place
@@ -221,8 +229,7 @@
             
             //Variables 
             string   AllSymbolsString           = "AUDCAD|EURAUD|EURCAD|EURNZD|AUDNZD|EURJPY|GBPCAD|GBPNZD|NZDCAD|NZDJPY|NZDUSD|USDCAD|GBPAUD|CADJPY|USDCHF"; 
-            int      NumberOfTradeableSymbols;              
-            int      TicksReceivedCount         = 0; 
+            int      NumberOfTradeableSymbols;               
         // -- -- Indicators Varibles -- -- //
             //  ATR -- StopLoss & TakeProfit
                 // Inputs
@@ -236,6 +243,8 @@
                 double bTP;       // Stores buy TakeProfit calculated from ask and Modified ATR value. Use for TP argument in order function.
                 double bSL;       // Stores buy StopLoss calculated from ask and Modified ATR value. Use for SL argument in order function.
                 double sTP;       // Stores sell TakeProfit calculated from bid and Modified ATR value. Use for TP argument in order function.
+                double iTP;       // Suspect memory allocates too many values to the multipler (ex. input = 0.2, variable is 0.200000000011). Limiting number of digits by normlizing the input and storing it in this.
+                double iSL;       // Suspect memory allocates too many values to the multipler (ex. input = 0.2, variable is 0.200000000011). Limiting number of digits by normlizing the input and storing it in this.
                 double sSL;       // Stores sell StopLoss calculated from bid and Modified ATR value. Use for SL argument in order function.
             
             //  Moving Average 
@@ -297,6 +306,9 @@
         trade.SetExpertMagicNumber(iMagic);     //  Set EA magic number
         
         //  Set-Up All Symbols
+            // SET UP ANY VARIABLES
+                iTP  =   NormalizeDouble(iTPmultiplier, 2);
+                iSL  =   NormalizeDouble(iSLmultiplier, 2);
             // DEFINE SYMBOLS FOR USE
                 if(TradeSymbols == "CURRENT")   {  // Override TradeSymbols input variable and use the current chart symbol only
                     NumberOfTradeableSymbols = 1;
@@ -321,7 +333,6 @@
             // INITIALIZE ARRAYS
                 for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
                     OpenTradeOrderTicket[SymbolLoop] = 0;
-                ArrayResize(bOpenOrders,0);
             // INSTANTIATE INDICATOR HANDLES
                 if(!SetUpIndicatorHandles())
                     return(INIT_FAILED); 
@@ -333,7 +344,7 @@
 
         TicksReceivedCount++;
         #ifdef dbgTickCnt Comment(TicksReceivedCount); 
-            int tick = 0;
+            int tick = 218250;
             if( tick != 0 && TicksReceivedCount == tick ) DebugBreak(); #endif
         string indicatorMetrics = "";
       
@@ -341,6 +352,9 @@
       //LOOP THROUGH EACH SYMBOL TO CHECK FOR ENTRIES AND EXITS, AND THEN OPEN/CLOSE TRADES AS APPROPRIATE
         for(int SymbolLoop = 0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)  {
             string CurrentIndicatorValues; //passed by ref below
+            
+            // Update Positions
+                checkUpdatePosition(SymbolLoop, CurrentIndicatorValues);
             
             // Get Close Signal 
                 ETRADESIGNAL CloseSignalStatus = checkForCloseSignal(SymbolLoop, CurrentIndicatorValues);
@@ -366,6 +380,10 @@
             }
         }
         
+// -- -- OnEvent -- -- //
+    void OnTradeTransaction(const MqlTradeTransaction &trans, const MqlTradeRequest &request, const MqlTradeResult &result) {
+        Print("TradeTrans Tick: ", TicksReceivedCount);
+        }
 // -- -- OnTester -- -- //
     double OnTester() {
         double ret = 1;
@@ -471,6 +489,7 @@
             }
         void ResizeCoreArrays() {
             ArrayResize(OpenTradeOrderTicket, NumberOfTradeableSymbols);
+            ArrayResize(bsPos, 0);
             // Add other trade arrays here as needed
             }
         void ResizeIndicatorHandleArrays()  {
@@ -553,7 +572,7 @@
             
             // Get the ticket of the deal at the given index
             for(int i = 0; i < dealsTotal; i++) {      
-                long mTicket;                   
+                ulong mTicket;                   
                 // Now select the deal by its ticket
                 if((mTicket = HistoryOrderGetTicket(i))>0) {         
                     sDealsData deals;
@@ -599,13 +618,13 @@
             string CurrentSymbol = SymbolArray[SymbolLoop];
             if (TradeDirection == SIGNAL_NONE) {return;}
             else if (TradeDirection == SIGNAL_BUY)  { orderVolumeBuy(iVolFactor, iMaxOrder, CurrentSymbol);     
-                                                      bool TPSLcheck = createTPSL(iTPmultiplier, iSLmultiplier, TradeDirection, CurrentSymbol, SymbolLoop); 
+                                                      bool TPSLcheck = createTPSL(iTP, iSL, TradeDirection, CurrentSymbol, SymbolLoop); 
                                                       if(TPSLcheck == true) { orderBuy(bTP, bSL, volumeBuyPass, CurrentSymbol); }
                                                         else Print("processTradeOpen Buy Fail due to TPSL fail", " Error: ", GetLastError() );
                                                         return;
                                                         }
             else if (TradeDirection == SIGNAL_SELL) { orderVolumeSell(iVolFactor, iMaxOrder, CurrentSymbol); 
-                                                      bool TPSLcheck = createTPSL(iTPmultiplier, iSLmultiplier, TradeDirection, CurrentSymbol, SymbolLoop);
+                                                      bool TPSLcheck = createTPSL(iTP, iSL, TradeDirection, CurrentSymbol, SymbolLoop);
                                                       if(TPSLcheck == true) { orderSell(sTP, sSL, volumeSellPass, CurrentSymbol); }
                                                       else Print("processTradeOpen Sell Fail due to TPSL fail", " Error: ", GetLastError() );
                                                         return;
@@ -694,7 +713,7 @@
             double mAsk     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK);
             double mBid     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_BID);
             
-            int    mDigits  =   SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS);  
+            int    mDigits  =   (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS);  
             int    numValuesNeededATR = 1;
 
             bool fillSuccessATR     = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, CurrentSymbol, "ATR");
@@ -727,21 +746,204 @@
         void orderBuy(double tp, double sl, double vol, string Symbol) {               //  See void placeOrder()
             
             double mBid     =   SymbolInfoDouble(Symbol, SYMBOL_BID);
-            double mVol     =   NormalizeDouble((vol/2), 2);
-
-            if( trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, tp, tradeCommentBuy1) ) { return; }
-                else { Print("orderBuy Fail", " Error: ", GetLastError() ); }
-            } 
-
-        void orderSell(double tp, double sl, double vol, string Symbol) {              //  See void placeOrder()
+            double mVol     =   NormalizeDouble((vol), 2);
             
-            double mAsk         =   SymbolInfoDouble(Symbol, SYMBOL_ASK);
-            double mVol         =   NormalizeDouble((vol/2),2);
+            #ifdef dbgOpenOrder DebugBreak(); #endif
+
+            if( iTrailingON == false ) { trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, tp, tradeCommentBuy1); }
             
-            if( trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, tp, tradeCommentSell1) ) { return; }
-                else { Print( "orderSell Fail", " Error: ", GetLastError() ); }
+            else if( trade.PositionOpen(Symbol, ORDER_TYPE_BUY, mVol, mBid, sl, NULL, tradeCommentBuy1) ) { 
+                // Find the most recent position for this symbol
+                long        newestTicket    = -1;
+                datetime    latestTime      = 0;
+                datetime    openTime        = 0;
+
+                for ( int i = PositionsTotal() - 1; i >= 0; i-- ) {  // Iterate over all positions
+                    if  (positionInfo.SelectByIndex(i) ) {           // Select each position
+                        if ( positionInfo.Symbol() == Symbol ) {     // Match the symbol
+                            openTime = positionInfo.Time();
+                            if ( openTime > latestTime ) {           // Check for the latest open time
+                                latestTime = openTime;
+                                newestTicket = positionInfo.Identifier();
+                                #ifdef dbgOpenOrder PrintFormat( "orderSell info || Sym: %s, PosOpentime: s%, latestTime: %s, Ticket: %g tickCnt: %g", Symbol, TimeToString(openTime), TimeToString(latestTime), newestTicket, TicksReceivedCount ); #endif
+                                }
+                            }
+                        }
+                    }
+
+                if (newestTicket != -1) { 
+                    // Successfully found the newest position
+                    int i = ArrayResize(bsPos, ArraySize(bsPos) + 1) - 1;
+                    sPos x;
+                    x.posID = newestTicket;
+                    x.tp = tp;
+                    x.lastPosUpdate = openTime;
+                    x.isTrailing = false;
+                    bsPos[i] = x;
+
+                    #ifdef dbgOpenOrder ArrayPrint(bsPos[i]); #endif
+                    } 
+                    
+                    else { Print("Error: Could not find the newest position for symbol: ", Symbol); }
+                } 
+                else { Print("orderSell Fail", " Error: ", GetLastError()); }
             }
 
+        void orderSell(double tp, double sl, double vol, string Symbol) {             
+            
+            double mAsk = SymbolInfoDouble(Symbol, SYMBOL_ASK);
+            double mVol = NormalizeDouble(vol, 2);
+
+            #ifdef dbgOpenOrder DebugBreak(); #endif
+
+            if( iTrailingON == false ) { trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, tp, tradeCommentSell1); }
+            
+            else if ( trade.PositionOpen(Symbol, ORDER_TYPE_SELL, mVol, mAsk, sl, NULL, tradeCommentSell1) ) { 
+                // Find the most recent position for this symbol
+                long        newestTicket    = -1;
+                datetime    latestTime      = 0;
+                datetime    openTime        = 0;
+
+                for ( int i = PositionsTotal() - 1; i >= 0; i-- ) {  // Iterate over all positions
+                    if  (positionInfo.SelectByIndex(i) ) {           // Select each position
+                        if ( positionInfo.Symbol() == Symbol ) {     // Match the symbol
+                            openTime = positionInfo.Time();
+                            if ( openTime > latestTime ) {           // Check for the latest open time
+                                latestTime = openTime;
+                                newestTicket = positionInfo.Identifier();
+                                #ifdef dbgOpenOrder PrintFormat( "orderSell info || Sym: %s, PosOpentime: s%, latestTime: %s, Ticket: %g, TickCount: %g", Symbol, TimeToString(openTime), TimeToString(latestTime), newestTicket, TicksReceivedCount ); #endif
+                                }
+                            }
+                        }
+                    }
+
+                if (newestTicket != -1) { 
+                    // Successfully found the newest position
+                    int i = ArrayResize(bsPos, ArraySize(bsPos) + 1) - 1;
+                    sPos x;
+                    x.posID         = newestTicket;
+                    x.tp            = tp;
+                    x.lastPosUpdate = openTime;
+                    x.isTrailing    = false;
+                    bsPos[i] = x;
+
+                    #ifdef dbgOpenOrder ArrayPrint(bsPos[i]); #endif
+                    } 
+                    
+                    else { Print("Error: Could not find the newest position for symbol: ", Symbol); }
+                } 
+                else { Print("orderSell Fail", " Error: ", GetLastError()); }
+            }
+        void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
+            if( iTrailingON == false ) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
+
+            string              CurrentSymbol   = SymbolArray[SymbolLoop];
+            string              currentTime     = TimeToString(TimeCurrent(), TIME_DATE);
+            string              posSym          = "";
+            string              lastPosModTime  = "";
+            double              vol             = 0;
+            double              ask             = SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK);
+            double              bid             = SymbolInfoDouble(CurrentSymbol, SYMBOL_BID);
+            double              volMin          = SymbolInfoDouble(CurrentSymbol, SYMBOL_VOLUME_MIN);
+            int                 sHr             = 16;
+            int                 sMn             = 50;
+            int                 eHr             = 16;
+            int                 eMn             = 59;
+            int                 symLoop         = SymbolLoop;
+            int                 posArrayIndex   = 0;
+            ENUM_POSITION_TYPE  posType         = NULL;
+            long                tix             = 0;
+
+            //  Check open positions if close or modification is necessary
+            for(int i=0; i < PositionsTotal(); i++ ) {
+                
+                //  Select positions and fill varibles
+                if( positionInfo.SelectByIndex(i) ) {
+                        tix     = positionInfo.Identifier();
+                        posSym  = positionInfo.Symbol();
+                        vol     = NormalizeDouble((positionInfo.Volume())*.75, 2);
+                        posType = positionInfo.PositionType();
+
+                    for( int t = ArraySize(bsPos)-1; t >= 0; t-- ) {
+                        
+                        posArrayIndex   = t;
+                        lastPosModTime  = TimeToString( bsPos[t].lastPosUpdate, TIME_DATE );
+
+                        //  Find position in bsPos array: 
+                        //  Double check selected position matches the position ID in the selected array index. 
+                        //  Check selected position is the current symbol and if position was already modified on this bar
+                        if( CurrentSymbol == posSym && bsPos[t].posID == tix ) {
+                            
+                            //  Check if this is order's 1st TP phase or trailing phase
+                            if( bsPos[t].isTrailing == false ) {
+                                //  If yes, check pos type and if price has reached TP.  Commit partial close and modify the order TP/SL
+                                if( posType == POSITION_TYPE_BUY && bsPos[t].tp <= ask ) {
+                                    if( vol <= volMin ) { vol = volMin; }
+                                    posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, posArrayIndex);
+                                    }
+                                else if( posType == POSITION_TYPE_SELL && bsPos[t].tp >= bid) {
+                                    if( vol <= volMin ) { vol = volMin; }
+                                    posPartialClose(CurrentSymbol, tix, posType, vol,  iTPmultiplier, iSLmultiplier, ask, bid, posArrayIndex);
+                                    }
+                                }
+
+                            //  Position IS trailing, check if SL to be modified (must be in set trade time window, pos must not have been modified on same day of check)
+                            else if( checkTimeRange(sHr, sMn, eHr, eMn) != false && lastPosModTime != currentTime ) {   
+                                posModify(CurrentSymbol, posArrayIndex, tix, posType, ask, bid);
+                                }
+                            }
+                        } 
+                    }
+                }
+            }
+   
+
+        void posPartialClose(string sym, long tix, ENUM_POSITION_TYPE type, double vol, double TPmulti, double SLmulti, double ask, double bid, int posArrayIndex ) {
+            if( trade.PositionClosePartial(tix, vol, ULONG_MAX) ) { 
+                int    numValuesNeededATR = 2;
+                double bATR[];
+                bool fillSuccessATR = custCopyBuffer(handle_ATR[bsPos[posArrayIndex].symbolLoop], 0, bATR, numValuesNeededATR, sym, "ATR");
+                
+                if( type == POSITION_TYPE_BUY ) {
+                    double sl = ask - (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*SLmulti);
+                    trade.PositionModify(tix, sl, NULL);
+                    bsPos[posArrayIndex].isTrailing = true;
+                    positionInfo.SelectByTicket(tix);
+                    bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
+                    }
+                    
+                    else { 
+                        double sl = bid + (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*SLmulti);
+                        trade.PositionModify(tix, sl, NULL);
+                        bsPos[posArrayIndex].isTrailing = true;
+                        positionInfo.SelectByTicket(tix);
+                        bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
+                        }
+                } Print("Partial Position ", tix, " close fail.  Error: ", GetLastError() );
+            }
+        void posModify(string sym, int posArrayIndex, long tix, ENUM_POSITION_TYPE type, double ask, double bid) {
+            
+            positionInfo.SelectByTicket(tix);
+
+            int     numValuesNeededATR = 2;
+            double  bATR[];
+            bool    fillSuccessATR = custCopyBuffer(handle_ATR[bsPos[posArrayIndex].symbolLoop], 0, bATR, numValuesNeededATR, sym, "ATR");
+            double  BuySl          = ask - (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iSLmultiplier);
+            double  SellSl         = bid + (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iSLmultiplier);
+            
+            if( type == POSITION_TYPE_BUY && ask > iClose(sym, PERIOD_D1, 1) && BuySl > positionInfo.StopLoss() ) {
+                if( trade.PositionModify(tix, BuySl, NULL) ) 
+                    { Print("Position ", tix, " SL updated to ", BuySl); } 
+                    else Print("Position ", tix, " SL update Failed. Error: ", GetLastError() );
+                }
+                else if( type == POSITION_TYPE_SELL && bid < iClose(sym, PERIOD_D1, 1) && SellSl < positionInfo.StopLoss() ) {
+                    if( trade.PositionModify(tix, BuySl, NULL) ) 
+                        { Print("Position ", tix, " SL updated to ", BuySl); } 
+                        else Print("Position ", tix, " SL update Failed. Error: ", GetLastError() );
+                    } Print("Position Modify Fail, Error: ", GetLastError() ); 
+                    if( type == POSITION_TYPE_BUY ) { PrintFormat("Type: Buy | Pos: %g, | Ask: %g | LastBarClose: %g | BuySL: %g | SLCrnt: %g ", tix, ask, NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), BuySl, positionInfo.StopLoss() );
+                        } PrintFormat("Type: Sell | Pos: %g, | Bid: %g | LastBarClose: %g | SellSL: %g | SLCrnt: %g ", tix, bid, NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), SellSl, positionInfo.StopLoss() );
+            }
     // -- -- Signals -- -- //
         ETRADESIGNAL checkForOpenSignal(int SymbolLoop, string& signalDiagnosticMetrics)    {
             string CurrentSymbol = SymbolArray[SymbolLoop];
@@ -903,11 +1105,8 @@
                 #ifdef dbgCheckTimeRange PrintFormat("Func: %s, CrntTime: %d, SignalPass: $d", 
                                                     __FUNCSIG__, mNow, chkTRPass); #endif    
             }                
-
+        
     // -- -- Working Functions  -- -- //
-        bool IsNewBar() {
-            return(false);
-            }
     // -- -- Template Functions -- -- //    
         /*
         string Check[INDICATOR]OpenSignalStatus(int SymbolLoop, string& signalDiagnosticMetrics)   {
@@ -942,6 +1141,50 @@
                 return("NO_TRADE");
         }
         */
-        
+    /*
+    if( positionInfo.PositionType() == POSITION_TYPE_BUY ) {
+                            
+                            if( bsPos[t].tp <= ask ) { 
+                                
+                                 
+                                
+                               
+
+                                        if(  ) {  
+                                            bsPos[t].lastPosUpdate = positionInfo.TimeUpdate();
+                                            #ifdef dbgcheckUpdatePosition PrintFormat( "Position: %g modified | StopLoss: %g | TakeProfit: %g | PosTimeUpdate: %s | TickCount: %g", tix, sl, tp, TimeToString(bsPos[t].lastPosUpdate, TIME_DATE), TicksReceivedCount); #endif
+                                            } 
+                                            else Print("Position: ", tix, " modify fail. Error: ", GetLastError());
+                                    } 
+                                    else Print("Partial close fail! Position: ", tix,  " Error: ", GetLastError());                                
+                                } 
+                            }
+                             else if ( bsPos[t].posID == tix && positionInfo.PositionType() == POSITION_TYPE_SELL ) {
+
+                                if( bsPos[t].tp >= bid ) {
+                                    
+                                    if( vol <= volMin ) { vol = volMin; }
+                                    
+                                    if( trade.PositionClosePartial(tix, vol, ULONG_MAX) ) { 
+                                        int    numValuesNeededATR = 1;
+                                        double bATR[];
+                                        bool fillSuccessATR = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, CurrentSymbol, "ATR");
+                                        //tp = bid - (NormalizeDouble(bATR[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS))*TPmulti); 
+                                        sl = bid + (NormalizeDouble(bATR[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS))*SLmulti);
+
+                                            if( trade.PositionModify(tix, sl, NULL) ) { 
+                                                bsPos[t].lastPosUpdate = positionInfo.TimeUpdate();
+                                                #ifdef dbgcheckUpdatePosition PrintFormat( "Position: %g modified | StopLoss: %g | TakeProfit: %g | PosTimeUpdate: %s | TickCount: %g", tix, sl, tp, TimeToString(bsPos[t].lastPosUpdate, TIME_DATE), TicksReceivedCount); #endif
+                                                } 
+                                                else Print("Position: ", tix, " modify fail. Error: ", GetLastError());
+                                        } 
+                                        else Print("Partial close fail! Position: ", tix,  " Error: ", GetLastError());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
  
