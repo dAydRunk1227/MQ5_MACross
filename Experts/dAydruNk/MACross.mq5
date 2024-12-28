@@ -10,6 +10,7 @@
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V3   (24-1227) Add 256 MA for open trade check.
     - V2.6 (24-1110) Scrap current trailing stop method for single trade with partial close.
         - Add checkUpdatePosition();
         - Add PosPartialClose();  Add PosModify();
@@ -200,6 +201,7 @@
         // Indicator Handles
             int handle_MAFast[];    // Moving Average Fast, Stores handles for all symbols to use
             int handle_MASlow[];    // Moving Average Slow, Stores handles for all symbols to use
+            int handle_MALong[];    // Moving Average Long, Stores handles for all symbols to use
             int handle_ATR[];       // Stores ATR handle for All Symbols  
             // int handle_MACD[];  // Stores MACD handle for All Symbols
         // Order & Positions Data
@@ -255,12 +257,15 @@
                 input ENUM_TIMEFRAMES       iMATF           =   PERIOD_CURRENT;  //  MA Timeframe
                 input ENUM_APPLIED_PRICE    iMAApplPrc      =   PRICE_CLOSE;     //  MA Price  
                 input ENUM_MA_METHOD        iMAMethodFast   =   MODE_SMA;        //  Fast MA Method
-                input int                   iMAFastPrd  =   10;                  //  MA Fast Period
-                input int                   iMAFastSft  =   0;                   //  MA Fast Shift
+                input int                   iMAFastPrd      =   10;              //  MA Fast Period
+                input int                   iMAFastSft      =   0;               //  MA Fast Shift
                 input ENUM_MA_METHOD        iMAMethodSlow   =   MODE_SMA;        //  Slow MA Method
-                input int                   iMASlowPrd  =   20;                  //  MA Slow Period
-                input int                   iMASlowSft  =   0;                   //  MA Slow Shift      
-                
+                input int                   iMASlowPrd      =   20;              //  MA Slow Period
+                input int                   iMASlowSft      =   0;               //  MA Slow Shift      
+                input ENUM_MA_METHOD        iMAMethodLong   =   MODE_SMA;        //  Long MA Method
+                input int                   iMALongPrd      =   20;              //  MA Long Period
+                input int                   iMALongSft      =   0;               //  MA Long Shift      
+      
             /*//  Adaptive Moving Average
                 //Inputs
                 input group "Adaptive Moving Average Parameters"
@@ -398,9 +403,10 @@
     void OnDeinit(const int reason) {   // *** Are these used???? 
         for(int SymbolLoop = 0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)  {
             IndicatorRelease(handle_ATR[SymbolLoop]);
-            
             IndicatorRelease(handle_MAFast[SymbolLoop]);
             IndicatorRelease(handle_MASlow[SymbolLoop]);
+            IndicatorRelease(handle_MALong[SymbolLoop]);
+            
             //IndicatorRelease(handle_AMA[SymbolLoop]);
             }    
         Print("\n\rMulti-Symbol EA Stopped");
@@ -413,9 +419,11 @@
             
                 handle_MAFast[SymbolLoop]   = iMA( SymbolArray[SymbolLoop], iMATF, iMAFastPrd, iMAFastSft, iMAMethodFast, iMAApplPrc);
                 handle_MASlow[SymbolLoop]   = iMA( SymbolArray[SymbolLoop], iMATF, iMASlowPrd, iMASlowSft, iMAMethodSlow, iMAApplPrc);
+                handle_MALong[SymbolLoop]   = iMA( SymbolArray[SymbolLoop], iMATF, iMALongPrd, iMALongSft, iMAMethodLong, iMAApplPrc);
                 handle_ATR[SymbolLoop]      = iATR(SymbolArray[SymbolLoop], iATRtf, iATRperiod);
 
-                if(handle_MAFast[SymbolLoop] == INVALID_HANDLE || handle_MASlow[SymbolLoop] == INVALID_HANDLE || handle_ATR[SymbolLoop] == INVALID_HANDLE) { 
+                if(handle_MAFast[SymbolLoop] == INVALID_HANDLE || handle_MASlow[SymbolLoop] == INVALID_HANDLE || handle_ATR[SymbolLoop] == INVALID_HANDLE 
+                    || handle_MALong[SymbolLoop] == INVALID_HANDLE) { 
                     string outputMessage    = "";
                     string outputMessage1   = "";
                     if(GetLastError() == 4302)  outputMessage = "Symbol needs to be added to the MarketWatch";
@@ -497,6 +505,7 @@
             ArrayResize(handle_ATR, NumberOfTradeableSymbols);
             ArrayResize(handle_MAFast, NumberOfTradeableSymbols);
             ArrayResize(handle_MASlow, NumberOfTradeableSymbols);
+            ArrayResize(handle_MALong, NumberOfTradeableSymbols);
             // Add other indicator handes here as needed
             
             //ArrayResize(handle_AMA, NumberOfTradeableSymbols);
@@ -961,18 +970,19 @@
             //Need to copy values from indicator buffers to local buffers
             int    numValuesNeededMA = 3;   // Number of values to fill indicator buffer. Determined by number of values required for signal logic
             
-            double bMAFast[], bMASlow[];
+            double bMAFast[], bMASlow[], bMALong[];
             double CurrentClose = iClose(CurrentSymbol, Period(), 0);
 
             ETRADESIGNAL openSignal = SIGNAL_NONE;
             
             bool fillSuccessMAFast  = custCopyBuffer(handle_MAFast[SymbolLoop], 0, bMAFast, numValuesNeededMA, CurrentSymbol, "MAFast");
             bool fillSuccessMASlow  = custCopyBuffer(handle_MASlow[SymbolLoop], 0, bMASlow, numValuesNeededMA, CurrentSymbol, "MASlow");
+            bool fillSuccessMALong  = custCopyBuffer(handle_MALong[SymbolLoop], 0, bMALong, numValuesNeededMA, CurrentSymbol, "MALong");
 
-            if(fillSuccessMAFast == false  ||  fillSuccessMASlow == false)
+            if(fillSuccessMAFast == false  ||  fillSuccessMASlow == false  ||  fillSuccessMALong == false)
                 return(SIGNAL_ERROR);     //No need to log error here. Already done from custCopyBuffer() function
             
-            #ifdef dbgcheckMAOpen PrintFormat("MAvalue check- MAFast2 %d, MASlow2 %d, MAFast1 %d, MASlow1 %d", bMAFast[1], bMASlow[1], bMAFast[0], bMASlow[0]); #endif
+            #ifdef dbgcheckMAOpen PrintFormat("MAvalue check- MAFast2 %d, MASlow2 %d, MAFast1 %d, MASlow1 %d, MALong2 %d, MALong1 %d", bMAFast[1], bMASlow[1], bMAFast[0], bMASlow[0], bMALong[1], bMALong[0]); #endif
             
             
             // Trade Signal Logic
@@ -983,10 +993,10 @@
             if ( openPosSignal != SIGNAL_POSOPEN_BOTH ) {
 
                 if ( (openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_SELL ) &&
-                   bMAFast[1] <= bMASlow[1] && bMAFast[0] > bMASlow[0] ) { openSignal = SIGNAL_BUY; }
+                   bMAFast[1] <= bMALong[1] && bMAFast[0] > bMALong[0] ) { openSignal = SIGNAL_BUY; }
 
                     else if ( ( openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_BUY ) &&
-                            bMAFast[1] >= bMASlow[1] && bMAFast[0] < bMASlow[0] ) { openSignal = SIGNAL_SELL; }
+                            bMAFast[1] >= bMALong[1] && bMAFast[0] < bMALong[0] ) { openSignal = SIGNAL_SELL; }
                 } 
            #ifdef dbgOpenSignal StringConcatenate(signalDiagnosticMetrics, 
                             "MAFast2=",  DoubleToString(bMAFast[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
