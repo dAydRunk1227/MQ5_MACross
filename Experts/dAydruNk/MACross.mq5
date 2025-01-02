@@ -4,13 +4,14 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "2.6"
+#property version   "3.1"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
-    - V3   (24-1227) Add 256 MA for open trade check.
+    - V3.1 (24-1228) Update modify positions to clean up Positions array and increase backtest speed.
+    - V3   (24-1227) Add long MA for open trade check.
     - V2.6 (24-1110) Scrap current trailing stop method for single trade with partial close.
         - Add checkUpdatePosition();
         - Add PosPartialClose();  Add PosModify();
@@ -105,10 +106,11 @@
    // #define dbgMACD
    // #define dbgOpenSignal
    // #define dbgCloseSignal
-    #define dbgTickCnt
+   // #define dbgTickCnt
    // #define dbgOpenOrder
    // #define dbgcheckNoOrders
-    #define dbgcheckUpdatePosition
+   // #define dbgcheckUpdatePosition
+        int dbgpositionArrayCount;
 // -- -- Declarations -- -- //
     // -- -- Classes -- -- //
         CHistoryOrderInfo ChisOrInfo;       // Class Declaration.
@@ -305,7 +307,8 @@
         
         // -- -- Data Logging Variables -- -- 
             // Write
-                string filename = "TestWrite.csv";
+                string filename  = "TestWrite.csv";
+                string filename1 = "PosArray.csv";
                 int filehandle;
 // -- -- Expert Init -- -- //
     int OnInit() {
@@ -350,7 +353,7 @@
 
         TicksReceivedCount++;
         #ifdef dbgTickCnt Comment(TicksReceivedCount);
-            int tick = 26993;
+            int tick = 689676;
             if( tick != 0 && TicksReceivedCount == tick ) DebugBreak(); #endif
         string indicatorMetrics = "";
       
@@ -381,6 +384,7 @@
                 if(OpenSignalStatus == SIGNAL_BUY || OpenSignalStatus == SIGNAL_SELL) {
                     ProcessTradeOpen(SymbolLoop, OpenSignalStatus);         
                     #ifdef dbgOpenSignal PrintFormat("Fun: %s, OpSigStat: %d", __FUNCSIG__, OpenSignalStatus); #endif
+                    positionArrayMaintenance();
                     }
             
             }
@@ -537,10 +541,10 @@
             filehandle = FileOpen(filename,FILE_READ|FILE_WRITE|FILE_CSV);
             if(filehandle != INVALID_HANDLE ) {
                 FileWrite(filehandle, "InitialDeposit", "Profit", "GrossProfit", "GrossLoss", "MaxProfitTrade", "MaxLossTrade", "ExpectedPayOff", "ProfitFactor", "Deals", "Trades", "TradesWin",
-                                      "TradesLoss", "ShortTrades", "LongTrades", "ProfitShortTrades", "ProfitLongTrades", "LengthProfitTradeSeries", "LengthLossTradeSeries"); 
+                                      "TradesLoss", "ShortTrades", "LongTrades", "ProfitShortTrades", "ProfitLongTrades", "LengthProfitTradeSeries", "LengthLossTradeSeries", "PosArraySize"); 
                 FileWrite(filehandle, StestStats.initDep, StestStats.profit, StestStats.grProfit, StestStats.grLoss, StestStats.maxProfitTrd,  StestStats.maxLossTrade, StestStats.expectedPayoff, 
                                       StestStats.profitFact, StestStats.dealCnt, StestStats.tradeCnt, StestStats.tradesWin, StestStats.tradesLoss, StestStats.tradesShort, StestStats.tradesLong, 
-                                      StestStats.tradesShtProfit, StestStats.tradesLgProfit, StestStats.avgTradesSerPro, StestStats.avgTradesSerLos);                
+                                      StestStats.tradesShtProfit, StestStats.tradesLgProfit, StestStats.avgTradesSerPro, StestStats.avgTradesSerLos, dbgpositionArrayCount);                
 
                         Print("File Written Successfully");
                         FileClose(filehandle);
@@ -558,6 +562,7 @@
             
             // Get the ticket of the order at the given index
             for(int i = 0; i < ordersTotal; i++) {      
+               
                 ulong mTicket;                   
                 // Now select the order by its ticket
                 if((mTicket = HistoryOrderGetTicket(i))>0) {         
@@ -604,11 +609,12 @@
                 }
         void writeorderData() {
             TradingHistoryDataFill();
+           
+            int index = 0;
 
             filehandle = FileOpen(filename,FILE_READ|FILE_WRITE|FILE_CSV);
             FileSeek(filehandle, 0, SEEK_END);
             
-            int index;
             if(filehandle != INVALID_HANDLE ) {
                 FileWrite(filehandle, "\nTypes:", "0=buy", "1=sell\n");
                 FileWrite(filehandle, "Symbol", "Dl.OrderType", "Dl.Volume (Lots)", "Ord.FillPrice", "Dl.Price", "Dl.Profit", "Ord.StopLoss", "Ord.TakeProfit", "Dl.Time", 
@@ -623,6 +629,7 @@
                 }
                 else { Print("File FAILED to open: ", index); }    
             }
+
     // -- -- Position Control -- -- //
         void ProcessTradeOpen(int SymbolLoop, ETRADESIGNAL TradeDirection)  {
             string CurrentSymbol = SymbolArray[SymbolLoop];
@@ -782,7 +789,7 @@
                             openTime = positionInfo.Time();
                             if ( openTime > latestTime ) {           // Check for the latest open time
                                 latestTime = openTime;
-                                newestTicket = positionInfo.Identifier();
+                                newestTicket = PositionGetInteger(POSITION_TICKET);
                                 #ifdef dbgOpenOrder PrintFormat( "orderSell info || Sym: %s, PosOpentime: s%, latestTime: %s, Ticket: %g tickCnt: %g", Symbol, TimeToString(openTime), TimeToString(latestTime), newestTicket, TicksReceivedCount ); #endif
                                 }
                             }
@@ -828,7 +835,7 @@
                             openTime = positionInfo.Time();
                             if ( openTime > latestTime ) {           // Check for the latest open time
                                 latestTime = openTime;
-                                newestTicket = positionInfo.Identifier();
+                                newestTicket = PositionGetInteger(POSITION_TICKET);
                                 #ifdef dbgOpenOrder PrintFormat( "orderSell info || Sym: %s, PosOpentime: s%, latestTime: %s, Ticket: %g, TickCount: %g", Symbol, TimeToString(openTime), TimeToString(latestTime), newestTicket, TicksReceivedCount ); #endif
                                 }
                             }
@@ -853,6 +860,7 @@
                 else { Print("orderSell Fail", " Error: ", GetLastError(), "Tick: ", TicksReceivedCount); }
             }
         void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
+            #ifdef dbgcheckUpdatePosition  #endif
             if( iTrailingON == false ) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
 
             string              CurrentSymbol   = SymbolArray[SymbolLoop];
@@ -876,9 +884,9 @@
                 
                 //  Select positions and fill varibles
                 if( positionInfo.SelectByIndex(i) ) {
-                        tix     = positionInfo.Identifier();
+                        tix     = PositionGetInteger(POSITION_TICKET);
                         posSym  = positionInfo.Symbol();
-                        vol     = NormalizeDouble((positionInfo.Volume())*.75, 2);
+                        vol     = NormalizeDouble((positionInfo.Volume())*.8, 2);
                         posType = positionInfo.PositionType();
 
                     for( int t = ArraySize(bsPos)-1; t >= 0; t-- ) {
@@ -907,6 +915,7 @@
                             else if( checkTimeRange(sHr, sMn, eHr, eMn) != false && lastPosModTime != currentTime ) {   
                                 posModify(CurrentSymbol, SymbolLoop, posArrayIndex, tix, posType, ask, bid);
                                 }
+                           #ifdef dbgcheckUpdatePosition dbgpositionArrayCount = ArraySize(bsPos); #endif // Print("Positions Arra size: ", dbgpositionArrayCount); #endif
                             }
                         } 
                     }
@@ -915,11 +924,12 @@
    
 
         void posPartialClose(string sym, long tix, ENUM_POSITION_TYPE type, double vol, double TPmulti, double SLmulti, double ask, double bid, int SymbolLoop, int posArrayIndex ) {
+            #ifdef dbgposPartialClose DebugBreak(); #endif
             if( trade.PositionClosePartial(tix, vol, ULONG_MAX) ) { 
                 
-                int    numValuesNeededATR = 2;
-                double bATR[];
-                bool fillSuccessATR = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, sym, "ATR");
+                int     numValuesNeededATR = 2;
+                double  bATR[];
+                bool    fillSuccessATR = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, sym, "ATR");
                 
                 if( type == POSITION_TYPE_BUY ) {
                     double sl = ask - (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*SLmulti);
@@ -949,19 +959,20 @@
             double  SellSl         = bid + (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iSLmultiplier);
             
             if( type == POSITION_TYPE_BUY && ask > iClose(sym, PERIOD_D1, 1) && BuySl > positionInfo.StopLoss() ) {
-                if( trade.PositionModify(tix, BuySl, NULL) ) 
-                    { bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
-                      Print("Position ", tix, " SL updated to ", BuySl); } 
-                    else Print("Position ", tix, " SL update Failed. Error: ", GetLastError(), "Tick: ", TicksReceivedCount );
+                
+                if( trade.PositionModify(tix, BuySl, NULL) ) { 
+                    bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
+                    PrintFormat("PosTypeMod: Buy | PosTix: %g, | Ask: %g | LastBarClose: %g | BuySL: %g | SLCrnt: %g ", tix, ask, 
+                    NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), BuySl, positionInfo.StopLoss() ); 
+                    } else Print("Position ", tix, " SL update Failed. Error: ", GetLastError(), " Tick: ", TicksReceivedCount );
                 }
                 else if( type == POSITION_TYPE_SELL && bid < iClose(sym, PERIOD_D1, 1) && SellSl < positionInfo.StopLoss() ) {
-                    if( trade.PositionModify(tix, SellSl, NULL) ) 
-                        {   bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
-                            Print("Position ", tix, " SL updated to ", SellSl); } 
-                        else Print("Position ", tix, " SL update Failed. Error: ", GetLastError(), "Tick: ", TicksReceivedCount );
-                    } Print("Position Modify Fail, Error: ", GetLastError(), "Tick: ", TicksReceivedCount ); 
-                    if( type == POSITION_TYPE_BUY ) { PrintFormat("Type: Buy | Pos: %g, | Ask: %g | LastBarClose: %g | BuySL: %g | SLCrnt: %g ", tix, ask, NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), BuySl, positionInfo.StopLoss() );
-                        } PrintFormat("Type: Sell | Pos: %g, | Bid: %g | LastBarClose: %g | SellSL: %g | SLCrnt: %g ", tix, bid, NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), SellSl, positionInfo.StopLoss() );
+                    if( trade.PositionModify(tix, SellSl, NULL) ) {
+                        bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
+                        PrintFormat("PosTypeMod: Sell | Pos: %g, | Bid: %g | LastBarClose: %g | SellSL: %g | SLCrnt: %g ", tix, bid,
+                        NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), SellSl, positionInfo.StopLoss() );
+                        } else Print("Position ", tix, " SL update Failed. Error: ", GetLastError(), "Tick: ", TicksReceivedCount );
+                    } 
             }
     // -- -- Signals -- -- //
         ETRADESIGNAL checkForOpenSignal(int SymbolLoop, string& signalDiagnosticMetrics)    {
@@ -1127,6 +1138,18 @@
             }                
         
     // -- -- Working Functions  -- -- //
+        void positionArrayMaintenance() {
+            int size = ArraySize(bsPos);
+            for(int i=size-1; i>=0; i--) {
+                ulong ticket = bsPos[i].posID;
+                if (!PositionSelectByTicket(ticket)) {                             // Check if position is still open
+                    ArrayRemove(bsPos, i, 1);                                      // Remove from array if closed
+                    ArrayResize(bsPos, ArraySize(bsPos));                          // Resize Array
+                    Print("Removed closed position with ticket: ", ticket, "Array Size: ", ArraySize(bsPos));
+                    
+                    }
+                }
+            }
     // -- -- Template Functions -- -- //    
         /*
         string Check[INDICATOR]OpenSignalStatus(int SymbolLoop, string& signalDiagnosticMetrics)   {
