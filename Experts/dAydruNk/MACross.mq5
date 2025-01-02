@@ -4,12 +4,14 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "3.1"
+#property version   "3.11"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V3.11(24-0101) Update trade entry logic to enter at fast MA cross long MA or fast MA cross slow 
+                        MA when both fast and slow MA are on the same side of the long MA and cross is in direction of that side
     - V3.1 (24-1228) Update modify positions to clean up Positions array and increase backtest speed.
     - V3   (24-1227) Add long MA for open trade check.
     - V2.6 (24-1110) Scrap current trailing stop method for single trade with partial close.
@@ -106,7 +108,7 @@
    // #define dbgMACD
    // #define dbgOpenSignal
    // #define dbgCloseSignal
-   // #define dbgTickCnt
+    #define dbgTickCnt
    // #define dbgOpenOrder
    // #define dbgcheckNoOrders
    // #define dbgcheckUpdatePosition
@@ -353,7 +355,7 @@
 
         TicksReceivedCount++;
         #ifdef dbgTickCnt Comment(TicksReceivedCount);
-            int tick = 689676;
+            int tick = 45705;
             if( tick != 0 && TicksReceivedCount == tick ) DebugBreak(); #endif
         string indicatorMetrics = "";
       
@@ -999,24 +1001,28 @@
             // Trade Signal Logic
             if ( checkTimeRange(startHr, startMn, endHr, endMn) == true ) {    
                 
-            ETRADESIGNAL openPosSignal = checkOpenPositions(CurrentSymbol);
+                ETRADESIGNAL openPosSignal = checkOpenPositions(CurrentSymbol);
 
-            if ( openPosSignal != SIGNAL_POSOPEN_BOTH ) {
-
-                if ( (openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_SELL ) &&
-                   bMAFast[1] <= bMALong[1] && bMAFast[0] > bMALong[0] ) { openSignal = SIGNAL_BUY; }
-
-                    else if ( ( openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_BUY ) &&
-                            bMAFast[1] >= bMALong[1] && bMAFast[0] < bMALong[0] ) { openSignal = SIGNAL_SELL; }
-                } 
-           #ifdef dbgOpenSignal StringConcatenate(signalDiagnosticMetrics, 
-                            "MAFast2=",  DoubleToString(bMAFast[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
-                            " MASlow2=", DoubleToString(bMASlow[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
-                            " MAFast1=", DoubleToString(bMAFast[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
-                            " MASlow1=", DoubleToString(bMASlow[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
-                            " CLOSE=" + DoubleToString(CurrentClose, (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)),
-                            " OpnPosSig: ", openPosSignal, " OpnSig: ", openSignal); #endif
-            }
+                if( openPosSignal != SIGNAL_POSOPEN_BOTH ) {
+                    if( openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_SELL ) {
+                        if( ( bMAFast[1] <= bMALong[1] && bMAFast[0] >= bMALong[0] ) || 
+                            ( bMAFast[0] >= bMALong[0] && bMASlow[0] >= bMALong[0] && 
+                              bMAFast[1] < bMASlow[1] && bMAFast[0] > bMASlow[0] ) ) { openSignal = SIGNAL_BUY; }
+                        }
+                    if( openPosSignal == SIGNAL_POSOPEN_NONE || openPosSignal == SIGNAL_POSOPEN_BUY ) {
+                        if( ( bMAFast[1] >= bMALong[1] && bMAFast[0] <= bMALong[0]) || 
+                            ( bMAFast[0] <= bMALong[0] && bMASlow[0] <= bMALong[0] && 
+                            bMAFast[1] > bMASlow[1] && bMAFast[0] < bMASlow[0] ) ) { openSignal = SIGNAL_SELL; }
+                        }
+                    } 
+            #ifdef dbgOpenSignal StringConcatenate(signalDiagnosticMetrics, 
+                                "MAFast2=",  DoubleToString(bMAFast[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
+                                " MASlow2=", DoubleToString(bMASlow[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
+                                " MAFast1=", DoubleToString(bMAFast[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
+                                " MASlow1=", DoubleToString(bMASlow[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
+                                " CLOSE=" + DoubleToString(CurrentClose, (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)),
+                                " OpnPosSig: ", openPosSignal, " OpnSig: ", openSignal); #endif
+                }
              
             return(openSignal); 
             }
