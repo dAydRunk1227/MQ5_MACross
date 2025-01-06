@@ -4,12 +4,13 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "3.11"
+#property version   "3.12"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V3.12(24-0101) Update checkPosModify 
     - V3.11(24-0101) Update trade entry logic to enter at fast MA cross long MA or fast MA cross slow 
                         MA when both fast and slow MA are on the same side of the long MA and cross is in direction of that side
     - V3.1 (24-1228) Update modify positions to clean up Positions array and increase backtest speed.
@@ -861,68 +862,81 @@
                 } 
                 else { Print("orderSell Fail", " Error: ", GetLastError(), "Tick: ", TicksReceivedCount); }
             }
-        void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
-            #ifdef dbgcheckUpdatePosition  #endif
-            if( iTrailingON == false ) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
+void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
+    #ifdef dbgcheckUpdatePosition  #endif
+    if (iTrailingON == false) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
 
-            string              CurrentSymbol   = SymbolArray[SymbolLoop];
-            string              currentTime     = TimeToString(TimeCurrent(), TIME_DATE);
-            string              posSym          = "";
-            string              lastPosModTime  = "";
-            double              vol             = 0;
-            double              ask             = SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK);
-            double              bid             = SymbolInfoDouble(CurrentSymbol, SYMBOL_BID);
-            double              volMin          = SymbolInfoDouble(CurrentSymbol, SYMBOL_VOLUME_MIN);
-            int                 sHr             = 16;
-            int                 sMn             = 50;
-            int                 eHr             = 16;
-            int                 eMn             = 59;
-            int                 posArrayIndex   = -1;
-            ENUM_POSITION_TYPE  posType         = NULL;
-            long                tix             = 0;
+    string              CurrentSymbol   = SymbolArray[SymbolLoop];
+    datetime            currentTime     = TimeCurrent();
+    string              posSym          = "";
+    datetime            lastPosModTime  = 0;
+    double              vol             = 0;
+    double              ask             = 0;
+    double              bid             = 0;
+    double              volMin          = SymbolInfoDouble(CurrentSymbol, SYMBOL_VOLUME_MIN);
+    int                 sHr             = 16;
+    int                 sMn             = 50;
+    int                 eHr             = 16;
+    int                 eMn             = 59;
+    int                 posArrayIndex   = -1;
+    ENUM_POSITION_TYPE  posType         = POSITION_TYPE_BUY;
+    long                tix             = 0;
 
-            //  Check open positions if close or modification is necessary
-            for(int i=0; i < PositionsTotal(); i++ ) {
-                
-                //  Select positions and fill varibles
-                if( positionInfo.SelectByIndex(i) ) {
-                        tix     = PositionGetInteger(POSITION_TICKET);
-                        posSym  = positionInfo.Symbol();
-                        vol     = NormalizeDouble((positionInfo.Volume())*.8, 2);
-                        posType = positionInfo.PositionType();
+    // Retrieve symbol prices safely
+    if (!SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(CurrentSymbol, SYMBOL_BID, bid)) {
+        Print("Error retrieving prices for symbol: ", CurrentSymbol);
+        return;
+    }
 
-                    for( int t = ArraySize(bsPos)-1; t >= 0; t-- ) {
-                        posArrayIndex   = t;
-                        lastPosModTime  = TimeToString( bsPos[t].lastPosUpdate, TIME_DATE );
+    // Store total positions to avoid recalculation in the loop
+    int totalPositions = PositionsTotal();
 
-                        //  Find position in bsPos array: 
-                        //  Double check selected position matches the position ID in the selected array index. 
-                        //  Check selected position is the current symbol and if position was already modified on this bar
-                        if( CurrentSymbol == posSym && bsPos[t].posID == tix ) {
-                            
-                            //  Check if this is order's 1st TP phase or trailing phase
-                            if( bsPos[t].isTrailing == false ) {
-                                //  If yes, check pos type and if price has reached TP.  Commit partial close and modify the order TP/SL
-                                if( posType == POSITION_TYPE_BUY && bsPos[t].tp <= ask ) {
-                                    if( vol <= volMin ) { vol = volMin; }
-                                    posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
-                                    }
-                                else if( posType == POSITION_TYPE_SELL && bsPos[t].tp >= bid) {
-                                    if( vol <= volMin ) { vol = volMin; }
-                                    posPartialClose(CurrentSymbol, tix, posType, vol,  iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
-                                    }
-                                }
+    for (int i = 0; i < totalPositions; i++) {
 
-                            //  Position IS trailing, check if SL to be modified (must be in set trade time window, pos must not have been modified on same day of check)
-                            else if( checkTimeRange(sHr, sMn, eHr, eMn) != false && lastPosModTime != currentTime ) {   
-                                posModify(CurrentSymbol, SymbolLoop, posArrayIndex, tix, posType, ask, bid);
-                                }
-                           #ifdef dbgcheckUpdatePosition dbgpositionArrayCount = ArraySize(bsPos); #endif // Print("Positions Arra size: ", dbgpositionArrayCount); #endif
-                            }
-                        } 
+        // Select positions and fill variables
+        if (positionInfo.SelectByIndex(i)) {
+            tix     = PositionGetInteger(POSITION_TICKET);
+            posSym  = positionInfo.Symbol();
+            vol     = NormalizeDouble((positionInfo.Volume()) * 0.8, 2);
+            posType = positionInfo.PositionType();
+
+            if (vol <= volMin) { vol = volMin; }
+
+            for (int t = ArraySize(bsPos) - 1; t >= 0; t--) {
+                posArrayIndex   = t;
+                lastPosModTime  = bsPos[t].lastPosUpdate;
+
+                // Find position in bsPos array:
+                // Check selected position matches position ID and current symbol
+                // Ensure position was not already modified on this bar
+                if (CurrentSymbol == posSym && bsPos[t].posID == tix) {
+
+                    // Check if this is order's 1st TP phase or trailing phase
+                    if (bsPos[t].isTrailing == false) {
+
+                        // Check position type and if price has reached TP
+                        if (posType == POSITION_TYPE_BUY && bsPos[t].tp <= ask) {
+                            posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
+                        } else if (posType == POSITION_TYPE_SELL && bsPos[t].tp >= bid) {
+                            posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
+                        }
+
+                    } else if (checkTimeRange(sHr, sMn, eHr, eMn) && (currentTime - lastPosModTime > 86400)) {
+
+                        // Position is trailing, check if SL needs modification
+                        posModify(CurrentSymbol, SymbolLoop, posArrayIndex, tix, posType, ask, bid);
                     }
+
+                    #ifdef dbgcheckUpdatePosition 
+                    dbgpositionArrayCount = ArraySize(bsPos); 
+                    Print("Positions Array size: ", dbgpositionArrayCount);
+                    #endif
                 }
             }
+        }
+    }
+}
+
    
 
         void posPartialClose(string sym, long tix, ENUM_POSITION_TYPE type, double vol, double TPmulti, double SLmulti, double ask, double bid, int SymbolLoop, int posArrayIndex ) {
