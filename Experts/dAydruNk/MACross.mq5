@@ -691,86 +691,6 @@
                 }
             }
                    
-        double orderVolumeBuy(double volFac, double maxOrder, string Symbol)  {        // Calculate order volume based on account balance and user input percent of
-            volumeBuyPass = 0;                                                          //  initialize result value to 0
-            
-            double mBalance     = AccountInfoDouble(ACCOUNT_BALANCE);       //  Store current account value
-            double mBid         = SymbolInfoDouble(Symbol, SYMBOL_BID);     //  Get current bid price; used in vol calculation
-            double mMaxOrder    = maxOrder/100;                             //  Factor to calulate user defined %of account allowed to trade
-            double mVol         = 0;                                        //  Initialize final value to 0                            
-            double mVolFac      = volFac/1000;                              //  Allows user input to manipulate final volume calulation.  Probably not useful. consider removing.
-            double mVolMin      = SymbolInfoDouble(Symbol, SYMBOL_VOLUME_MIN);
-            
-            mVol = ((mBalance * mMaxOrder) / mBid) * mVolFac;               //  Calculates percent of acct balance and divides by current price, then converts to micro lots
-            
-            if( mVol < mVolMin ) {
-                volumeBuyPass = NormalizeDouble(mVolMin, 2);                //  Reduces calculated value to 2 decimal places to fit requied format
-                } else volumeBuyPass   =   NormalizeDouble(mVol, 2);
-
-            #ifdef volumeOrderBuy PrintFormat("Function: %s, Acct Balance: %f, Bid: %f, volFact: %f, MaxOrd: %f, BuyVol: %f, VolNorm: %f", __FUNCTION__, mBalance, mBid, mVolFac, mMaxOrder, mVol, volumeBuyPass); #endif
-            
-            return volumeBuyPass;   //  Store volume for trade function
-            }
-        double orderVolumeSell(double volFac, double maxOrder, string Symbol)  {       // See orderVolumeBuy
-            volumeSellPass = 0;
-            
-            double mAsk = SymbolInfoDouble(Symbol, SYMBOL_ASK);
-            double mBalance = AccountInfoDouble(ACCOUNT_BALANCE);            
-            double mMaxOrder = maxOrder/100;
-            double mVol = 0;
-            double mVolFac = volFac/1000;
-            double mVolMin      = SymbolInfoDouble(Symbol, SYMBOL_VOLUME_MIN);
-
-            mVol = ((mBalance * mMaxOrder) / mAsk) * mVolFac;
-            
-            if( mVol < mVolMin ) {
-                volumeSellPass   =   NormalizeDouble(mVolMin, 2);               //  Reduces calculated value to 2 decimal places to fit requied format
-                } else volumeSellPass = NormalizeDouble(mVol, 2);
-            
-            #ifdef volumeOrderSell PrintFormat("Function: %s, Acct Balance: %f, Ask: %f, volFact: %f, MaxOrd: %f, SellVol: %f, VolNorm: %f", __FUNCTION__, mBalance, mAsk, mVolFac, mMaxOrder, mVol, volumeSellPass); #endif
-            
-            return volumeSellPass;
-            }
-        bool createTPSL(double TPmulti, double SLmulti, ETRADESIGNAL TradeDirection, 
-                        string CurrentSymbol, int SymbolLoop) {             // Calculates take profit and stop loss for buy and sell signals. 
-                                                                            // Note this does not yet cover situations in which the signal is "BOTH"
-                                                                            // Note CurrentSymbol is passed in as a check the correct symbol is being used.
-            if (TradeDirection == 0) { return(false); }
-            
-            double bATR[];
-            double mAsk     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK);
-            double mBid     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_BID);
-            
-            int    mDigits  =   (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS);  
-            int    numValuesNeededATR = 1;
-
-            bool fillSuccessATR     = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, CurrentSymbol, "ATR");
-            
-            sTP = 0; sSL = 0;       // Ensure values at 0 to start
-            bTP = 0; bSL = 0;       // Ensure values at 0 to start
-
-            if      (fillSuccessATR == false) {                
-                Print("ATR Create error: ", GetLastError(), "Tick: ", TicksReceivedCount);
-                return(false);
-                }
-
-            else if (TradeDirection == 2) {
-                bTP = mAsk + (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
-                bSL = mAsk - (NormalizeDouble(bATR[0], mDigits)*SLmulti);
-                #ifdef dbgPriceExit Print("Fnc: ", __FUNCSIG__, "Ask: ", NormalizeDouble(mAsk, mDigits), " ATR Value: ", NormalizeDouble(bATR[0], mDigits), " TP value: ", bTP, " SL value: ", bSL); #endif
-                return(true);
-                }
-
-            else if (TradeDirection == 3) {
-                sTP = mBid - (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
-                sSL = mBid + (NormalizeDouble(bATR[0], mDigits)*SLmulti);
-                #ifdef dbgProfit Print("Ask: ", mBid, " ATR Value: ", NormalizeDouble(bATR[0], mdigits), " TP value: ", sTP, " SL value: ", sSL); #endif
-                return(true);
-                }
-            
-            //StringConcatenate(signalDiagnosticMetrics, "ATR=", DoubleToString(bATR[0], mdigits));
-            return(false);
-            }         
         void orderBuy(double tp, double sl, double vol, string Symbol) {               //  See void placeOrder()
             
             double mBid     =   SymbolInfoDouble(Symbol, SYMBOL_BID);
@@ -862,83 +782,6 @@
                 } 
                 else { Print("orderSell Fail", " Error: ", GetLastError(), "Tick: ", TicksReceivedCount); }
             }
-void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
-    #ifdef dbgcheckUpdatePosition  #endif
-    if (iTrailingON == false) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
-
-    string              CurrentSymbol   = SymbolArray[SymbolLoop];
-    datetime            currentTime     = TimeCurrent();
-    string              posSym          = "";
-    datetime            lastPosModTime  = 0;
-    double              vol             = 0;
-    double              ask             = 0;
-    double              bid             = 0;
-    double              volMin          = SymbolInfoDouble(CurrentSymbol, SYMBOL_VOLUME_MIN);
-    int                 sHr             = 16;
-    int                 sMn             = 50;
-    int                 eHr             = 16;
-    int                 eMn             = 59;
-    int                 posArrayIndex   = -1;
-    ENUM_POSITION_TYPE  posType         = POSITION_TYPE_BUY;
-    long                tix             = 0;
-
-    // Retrieve symbol prices safely
-    if (!SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(CurrentSymbol, SYMBOL_BID, bid)) {
-        Print("Error retrieving prices for symbol: ", CurrentSymbol);
-        return;
-    }
-
-    // Store total positions to avoid recalculation in the loop
-    int totalPositions = PositionsTotal();
-
-    for (int i = 0; i < totalPositions; i++) {
-
-        // Select positions and fill variables
-        if (positionInfo.SelectByIndex(i)) {
-            tix     = PositionGetInteger(POSITION_TICKET);
-            posSym  = positionInfo.Symbol();
-            vol     = NormalizeDouble((positionInfo.Volume()) * 0.8, 2);
-            posType = positionInfo.PositionType();
-
-            if (vol <= volMin) { vol = volMin; }
-
-            for (int t = ArraySize(bsPos) - 1; t >= 0; t--) {
-                posArrayIndex   = t;
-                lastPosModTime  = bsPos[t].lastPosUpdate;
-
-                // Find position in bsPos array:
-                // Check selected position matches position ID and current symbol
-                // Ensure position was not already modified on this bar
-                if (CurrentSymbol == posSym && bsPos[t].posID == tix) {
-
-                    // Check if this is order's 1st TP phase or trailing phase
-                    if (bsPos[t].isTrailing == false) {
-
-                        // Check position type and if price has reached TP
-                        if (posType == POSITION_TYPE_BUY && bsPos[t].tp <= ask) {
-                            posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
-                        } else if (posType == POSITION_TYPE_SELL && bsPos[t].tp >= bid) {
-                            posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
-                        }
-
-                    } else if (checkTimeRange(sHr, sMn, eHr, eMn) && (currentTime - lastPosModTime > 86400)) {
-
-                        // Position is trailing, check if SL needs modification
-                        posModify(CurrentSymbol, SymbolLoop, posArrayIndex, tix, posType, ask, bid);
-                    }
-
-                    #ifdef dbgcheckUpdatePosition 
-                    dbgpositionArrayCount = ArraySize(bsPos); 
-                    Print("Positions Array size: ", dbgpositionArrayCount);
-                    #endif
-                }
-            }
-        }
-    }
-}
-
-   
-
         void posPartialClose(string sym, long tix, ENUM_POSITION_TYPE type, double vol, double TPmulti, double SLmulti, double ask, double bid, int SymbolLoop, int posArrayIndex ) {
             #ifdef dbgposPartialClose DebugBreak(); #endif
             if( trade.PositionClosePartial(tix, vol, ULONG_MAX) ) { 
@@ -1158,6 +1001,162 @@ void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
             }                
         
     // -- -- Working Functions  -- -- //
+        double orderVolumeBuy(double volFac, double maxOrder, string Symbol)  {        // Calculate order volume based on account balance and user input percent of
+            volumeBuyPass = 0;                                                          //  initialize result value to 0
+            
+            double mBalance     = AccountInfoDouble(ACCOUNT_BALANCE);       //  Store current account value
+            double mBid         = SymbolInfoDouble(Symbol, SYMBOL_BID);     //  Get current bid price; used in vol calculation
+            double mMaxOrder    = maxOrder/100;                             //  Factor to calulate user defined %of account allowed to trade
+            double mVol         = 0;                                        //  Initialize final value to 0                            
+            double mVolFac      = volFac/1000;                              //  Allows user input to manipulate final volume calulation.  Probably not useful. consider removing.
+            double mVolMin      = SymbolInfoDouble(Symbol, SYMBOL_VOLUME_MIN);
+            
+            mVol = ((mBalance * mMaxOrder) / mBid) * mVolFac;               //  Calculates percent of acct balance and divides by current price, then converts to micro lots
+            
+            if( mVol < mVolMin ) {
+                volumeBuyPass = NormalizeDouble(mVolMin, 2);                //  Reduces calculated value to 2 decimal places to fit requied format
+                } else volumeBuyPass   =   NormalizeDouble(mVol, 2);
+
+            #ifdef volumeOrderBuy PrintFormat("Function: %s, Acct Balance: %f, Bid: %f, volFact: %f, MaxOrd: %f, BuyVol: %f, VolNorm: %f", __FUNCTION__, mBalance, mBid, mVolFac, mMaxOrder, mVol, volumeBuyPass); #endif
+            
+            return volumeBuyPass;   //  Store volume for trade function
+            }
+        double orderVolumeSell(double volFac, double maxOrder, string Symbol)  {       // See orderVolumeBuy
+            volumeSellPass = 0;
+            
+            double mAsk = SymbolInfoDouble(Symbol, SYMBOL_ASK);
+            double mBalance = AccountInfoDouble(ACCOUNT_BALANCE);            
+            double mMaxOrder = maxOrder/100;
+            double mVol = 0;
+            double mVolFac = volFac/1000;
+            double mVolMin      = SymbolInfoDouble(Symbol, SYMBOL_VOLUME_MIN);
+
+            mVol = ((mBalance * mMaxOrder) / mAsk) * mVolFac;
+            
+            if( mVol < mVolMin ) {
+                volumeSellPass   =   NormalizeDouble(mVolMin, 2);               //  Reduces calculated value to 2 decimal places to fit requied format
+                } else volumeSellPass = NormalizeDouble(mVol, 2);
+            
+            #ifdef volumeOrderSell PrintFormat("Function: %s, Acct Balance: %f, Ask: %f, volFact: %f, MaxOrd: %f, SellVol: %f, VolNorm: %f", __FUNCTION__, mBalance, mAsk, mVolFac, mMaxOrder, mVol, volumeSellPass); #endif
+            
+            return volumeSellPass;
+            }
+        bool createTPSL(double TPmulti, double SLmulti, ETRADESIGNAL TradeDirection, 
+                        string CurrentSymbol, int SymbolLoop) {             // Calculates take profit and stop loss for buy and sell signals. 
+                                                                            // Note this does not yet cover situations in which the signal is "BOTH"
+                                                                            // Note CurrentSymbol is passed in as a check the correct symbol is being used.
+            if (TradeDirection == 0) { return(false); }
+            
+            double bATR[];
+            double mAsk     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK);
+            double mBid     =   SymbolInfoDouble(CurrentSymbol, SYMBOL_BID);
+            
+            int    mDigits  =   (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS);  
+            int    numValuesNeededATR = 1;
+
+            bool fillSuccessATR     = custCopyBuffer(handle_ATR[SymbolLoop], 0, bATR, numValuesNeededATR, CurrentSymbol, "ATR");
+            
+            sTP = 0; sSL = 0;       // Ensure values at 0 to start
+            bTP = 0; bSL = 0;       // Ensure values at 0 to start
+
+            if      (fillSuccessATR == false) {                
+                Print("ATR Create error: ", GetLastError(), "Tick: ", TicksReceivedCount);
+                return(false);
+                }
+
+            else if (TradeDirection == 2) {
+                bTP = mAsk + (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
+                bSL = mAsk - (NormalizeDouble(bATR[0], mDigits)*SLmulti);
+                #ifdef dbgPriceExit Print("Fnc: ", __FUNCSIG__, "Ask: ", NormalizeDouble(mAsk, mDigits), " ATR Value: ", NormalizeDouble(bATR[0], mDigits), " TP value: ", bTP, " SL value: ", bSL); #endif
+                return(true);
+                }
+
+            else if (TradeDirection == 3) {
+                sTP = mBid - (NormalizeDouble(bATR[0], mDigits)*TPmulti); 
+                sSL = mBid + (NormalizeDouble(bATR[0], mDigits)*SLmulti);
+                #ifdef dbgProfit Print("Ask: ", mBid, " ATR Value: ", NormalizeDouble(bATR[0], mdigits), " TP value: ", sTP, " SL value: ", sSL); #endif
+                return(true);
+                }
+            
+            //StringConcatenate(signalDiagnosticMetrics, "ATR=", DoubleToString(bATR[0], mdigits));
+            return(false);
+            }         
+
+        void checkUpdatePosition(int SymbolLoop, string& signalDiagnosticMetrics) {
+            #ifdef dbgcheckUpdatePosition  #endif
+            if (iTrailingON == false) { return; }   // **********This should change.  TP could get hit and then leave when outside time window.
+
+            string              CurrentSymbol   = SymbolArray[SymbolLoop];
+            datetime            currentTime     = TimeCurrent();
+            string              posSym          = "";
+            datetime            lastPosModTime  = 0;
+            double              vol             = 0;
+            double              ask             = 0;
+            double              bid             = 0;
+            double              volMin          = SymbolInfoDouble(CurrentSymbol, SYMBOL_VOLUME_MIN);
+            int                 sHr             = 16;
+            int                 sMn             = 50;
+            int                 eHr             = 16;
+            int                 eMn             = 59;
+            int                 posArrayIndex   = -1;
+            ENUM_POSITION_TYPE  posType         = POSITION_TYPE_BUY;
+            long                tix             = 0;
+
+            // Retrieve symbol prices safely
+            if (!SymbolInfoDouble(CurrentSymbol, SYMBOL_ASK, ask) || !SymbolInfoDouble(CurrentSymbol, SYMBOL_BID, bid)) {
+                Print("Error retrieving prices for symbol: ", CurrentSymbol);
+                return;
+                }
+
+            // Store total positions to avoid recalculation in the loop
+            int totalPositions = PositionsTotal();
+
+            for (int i = 0; i < totalPositions; i++) {
+
+                // Select positions and fill variables
+                if (positionInfo.SelectByIndex(i)) {
+                    tix     = PositionGetInteger(POSITION_TICKET);
+                    posSym  = positionInfo.Symbol();
+                    vol     = NormalizeDouble((positionInfo.Volume()) * 0.8, 2);
+                    posType = positionInfo.PositionType();
+
+                    if (vol <= volMin) { vol = volMin; }
+
+                    for (int t = ArraySize(bsPos) - 1; t >= 0; t--) {
+                        posArrayIndex   = t;
+                        lastPosModTime  = bsPos[t].lastPosUpdate;
+
+                        // Find position in bsPos array:
+                        // Check selected position matches position ID and current symbol
+                        // Ensure position was not already modified on this bar
+                        if (CurrentSymbol == posSym && bsPos[t].posID == tix) {
+
+                            // Check if this is order's 1st TP phase or trailing phase
+                            if (bsPos[t].isTrailing == false) {
+
+                                // Check position type and if price has reached TP
+                                if (posType == POSITION_TYPE_BUY && bsPos[t].tp <= ask) {
+                                    posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
+                                } else if (posType == POSITION_TYPE_SELL && bsPos[t].tp >= bid) {
+                                    posPartialClose(CurrentSymbol, tix, posType, vol, iTPmultiplier, iSLmultiplier, ask, bid, SymbolLoop, posArrayIndex);
+                                }
+
+                            } else if (checkTimeRange(sHr, sMn, eHr, eMn) && (currentTime - lastPosModTime > 86400)) {
+
+                                // Position is trailing, check if SL needs modification
+                                posModify(CurrentSymbol, SymbolLoop, posArrayIndex, tix, posType, ask, bid);
+                             }
+
+                            #ifdef dbgcheckUpdatePosition 
+                            dbgpositionArrayCount = ArraySize(bsPos); 
+                            Print("Positions Array size: ", dbgpositionArrayCount);
+                            #endif
+                            }
+                        }
+                    }
+                }
+            }
+        
         void positionArrayMaintenance() {
             int size = ArraySize(bsPos);
             for(int i=size-1; i>=0; i--) {
