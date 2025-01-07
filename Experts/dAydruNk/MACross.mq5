@@ -866,7 +866,7 @@
                     switch ( openPosSignal ) {
                         case SIGNAL_POSOPEN_NONE:
                             if( isBuySignal(bMAFast, bMASlow, bMALong) ) { openSignal = SIGNAL_BUY; }
-                            if( isSellSignal(bMAFast, bMASlow, bMALong) ) { openSignal =  SIGNAL_SELL; }    
+                            else if( isSellSignal(bMAFast, bMASlow, bMALong) ) { openSignal =  SIGNAL_SELL; }    
                             break;
                         case SIGNAL_POSOPEN_SELL:
                             if( isBuySignal(bMAFast, bMASlow, bMALong) ) { openSignal =  SIGNAL_BUY; }
@@ -878,7 +878,8 @@
                             openSignal =  SIGNAL_NONE;
                             break;
                         }
-                        openSignal =  SIGNAL_NONE;
+                    }
+                }
 
             #ifdef dbgOpenSignal StringConcatenate(signalDiagnosticMetrics, 
                                 "MAFast2=",  DoubleToString(bMAFast[1], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
@@ -887,10 +888,9 @@
                                 " MASlow1=", DoubleToString(bMASlow[0], (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
                                 " CLOSE=" + DoubleToString(CurrentClose, (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)),
                                 " OpnPosSig: ", openPosSignal, " OpnSig: ", openSignal); #endif
-                }
+            
+            return(openSignal); 
             }
-        return(openSignal); 
-        }
         ETRADESIGNAL checkForCloseSignal(int SymbolLoop, string& signalDiagnosticMetrics)   {
             string CurrentSymbol = SymbolArray[SymbolLoop];
             
