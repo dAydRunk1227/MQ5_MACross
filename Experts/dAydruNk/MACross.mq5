@@ -357,7 +357,7 @@
 
         TicksReceivedCount++;
         #ifdef dbgTickCnt Comment(TicksReceivedCount);
-            int tick = 45705;
+            int tick = 628900;
             if( tick != 0 && TicksReceivedCount == tick ) DebugBreak(); #endif
         string indicatorMetrics = "";
       
