@@ -6,7 +6,23 @@ Framework EA/
 AllSymbolsSample.mq5
 Files/
 Images/
-Include/
+Include/Arrays/
+Include/Canvas/
+Include/ChartObjects/
+Include/Charts/
+Include/Controls/
+Include/dAydruNk/
+Include/Expert/
+Include/Generic/
+Include/Graphics/
+Include/Math/
+Include/OpenCL/
+Include/WinAPI/
+Object.mqh
+smoothalgorithms.mqh
+VirtualKeys.mqh
+MovingAverages.mqh
+MyInclude 1.15.mqh
 Indicators/
 Libraries/
 Logs/
