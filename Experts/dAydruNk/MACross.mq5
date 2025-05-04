@@ -4,12 +4,14 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "3.13"
+#property version   "3.20"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V3.20(24-0106) Relocate variables to fit more logically into trade inputs in user interface
+                        Add user input for leading profit. Modify trailing stop mechanism to include Take profit instead of forcing out at stoploss 
     - V3.13(24-0106) Reformat checkForOPenSignal function. Break signal logic out into buy and sell function check functions.  Use switch to reduce if statments 
     - V3.12(24-0101) Update checkPosModify 
     - V3.11(24-0101) Update trade entry logic to enter at fast MA cross long MA or fast MA cross slow 
@@ -221,9 +223,20 @@
         // -- -- Trade Variables -- -- //
             // Inputs
                 input group "Trade"
-                input bool      iTrailingON = false; //  Toggle trailing stop On/Off    
-                input double    iMaxOrder   = 2;     //  Max % of account value allowed
-                input int       iVolFactor  = 1;     //  Min 1 max 10
+                input bool      iTrailingON     = false;    //  Toggle trailing stop On/Off    
+                input double    iMaxOrder       = 2;        //  Max % of account value allowed
+                input int       iVolFactor      = 1;        //  Vol. Factor Min 1 max 10
+                input double    iTPmultiplier   = 2.5;      //  Multiplier for TP
+                input double    iSLmultiplier   = 1;        //  Multiplier for SL 
+                input double    iLeadProfitMult = 1;        //  Multiplier for leading Take Profit 
+                input bool      iMAexitOn       = true;     //  Toggle use of MA exit signal
+            // TimeRange
+                input group "Time Range"    // Use to set desired time range to trade in
+                input int startHr   = 25;          // TimeRange start hour
+                input int startMn   = 00;          // TimeRange start min
+                input int endHr     = 25;          // TimeRange end hour
+                input int endMn     = 00;          // TimeRange end min
+
             // Working
                 string tradeCommentBuy1  =  "OrderSend";        //  Sets buy trade comment to distinguish cale out
                 string tradeCommentBuy2  =  "Buy, Running";     //  Sets buy trade comment to distinguish runner
@@ -243,8 +256,8 @@
             //  ATR -- StopLoss & TakeProfit
                 // Inputs
                 input group "ATR Parameters"
-                input double            iTPmultiplier   = 2.5;  // Multiplier for TP
-                input double            iSLmultiplier   = 1;    // Multiplier for SL 
+                // input double            iTPmultiplier   = 2.5;  // See Trade Variables\Inputs
+                // input double            iSLmultiplier   = 1;    // See Trade Variables\InputsL 
                 input ENUM_TIMEFRAMES   iATRtf          = 0;    // ATR Timeframe (0=current chart)
                 input int               iATRperiod      = 14;   // ATR Calculated Period   
             
@@ -259,18 +272,17 @@
             //  Moving Average 
                 // Inputs
                 input group "Moving Average Parameters"
-                input bool                  iMAexitOn       =   true;            //  Toggle use of MA exit signal
                 input ENUM_TIMEFRAMES       iMATF           =   PERIOD_CURRENT;  //  MA Timeframe
-                input ENUM_APPLIED_PRICE    iMAApplPrc      =   PRICE_CLOSE;     //  MA Price  
-                input ENUM_MA_METHOD        iMAMethodFast   =   MODE_SMA;        //  Fast MA Method
-                input int                   iMAFastPrd      =   10;              //  MA Fast Period
-                input int                   iMAFastSft      =   0;               //  MA Fast Shift
-                input ENUM_MA_METHOD        iMAMethodSlow   =   MODE_SMA;        //  Slow MA Method
-                input int                   iMASlowPrd      =   20;              //  MA Slow Period
-                input int                   iMASlowSft      =   0;               //  MA Slow Shift      
-                input ENUM_MA_METHOD        iMAMethodLong   =   MODE_SMA;        //  Long MA Method
-                input int                   iMALongPrd      =   20;              //  MA Long Period
-                input int                   iMALongSft      =   0;               //  MA Long Shift      
+                input ENUM_APPLIED_PRICE    iMAApplPrc      =   PRICE_CLOSE;     //  MA Applied Price  
+                input ENUM_MA_METHOD        iMAMethodFast   =   MODE_SMA;        //  Fast_Method
+                input ENUM_MA_METHOD        iMAMethodSlow   =   MODE_SMA;        //  Slow_Method
+                input ENUM_MA_METHOD        iMAMethodLong   =   MODE_SMA;        //  Long_Method
+                input int                   iMAFastPrd      =   10;              //  Fast_Period
+                input int                   iMASlowPrd      =   20;              //  Slow_Period
+                input int                   iMALongPrd      =   20;              //  Long_Period
+                input int                   iMAFastSft      =   0;               //  Fast_Shift
+                input int                   iMASlowSft      =   0;               //  Slow_Shift      
+                input int                   iMALongSft      =   0;               //  Long_Shift      
       
             /*//  Adaptive Moving Average
                 //Inputs
@@ -300,11 +312,11 @@
 
         // -- -- Signal Variables -- -- //
             // Inputs -- for CheckTimeRange
-                input group "Time Range"    // Use to set desired time range to trade in
-                input int startHr   = 25;          // TimeRange start hour
-                input int startMn   = 00;          // TimeRange start min
-                input int endHr     = 25;          // TimeRange end hour
-                input int endMn     = 00;          // TimeRange end min
+               // input group "Time Range"    // See Variables\Trade Variables\TimeRange
+               // input int startHr   = 25;   // TimeRange start hour
+               // input int startMn   = 00;   // TimeRange start min
+               // input int endHr     = 25;   // TimeRange end hour
+               // input int endMn     = 00;   // TimeRange end min
             // Working
                     ETRADESIGNAL posOpnSglPs;   // use with checkOpenPositions to pass result to signal array
                     ETRADESIGNAL chkTRPass;     // us with checkTimeRange to pass result
@@ -817,17 +829,19 @@
             bool    fillSuccessATR = custCopyBuffer(handle_ATR[symbolLoop], 0, bATR, numValuesNeededATR, sym, "ATR");
             double  BuySl          = ask - (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iSLmultiplier);
             double  SellSl         = bid + (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iSLmultiplier);
+            double  BuyTP          = ask + (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iLeadProfitMult);
+            double  SellTP         = bid - (NormalizeDouble(bATR[1], (int)SymbolInfoInteger(sym, SYMBOL_DIGITS))*iLeadProfitMult);
             
             if( type == POSITION_TYPE_BUY && ask > iClose(sym, PERIOD_D1, 1) && BuySl > positionInfo.StopLoss() ) {
                 
-                if( trade.PositionModify(tix, BuySl, NULL) ) { 
+                if( trade.PositionModify(tix, BuySl, BuyTP) ) { 
                     bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
                     PrintFormat("PosTypeMod: Buy | PosTix: %g, | Ask: %g | LastBarClose: %g | BuySL: %g | SLCrnt: %g ", tix, ask, 
                     NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), BuySl, positionInfo.StopLoss() ); 
                     } else Print("Position ", tix, " SL update Failed. Error: ", GetLastError(), " Tick: ", TicksReceivedCount );
                 }
                 else if( type == POSITION_TYPE_SELL && bid < iClose(sym, PERIOD_D1, 1) && SellSl < positionInfo.StopLoss() ) {
-                    if( trade.PositionModify(tix, SellSl, NULL) ) {
+                    if( trade.PositionModify(tix, SellSl, SellTP) ) {
                         bsPos[posArrayIndex].lastPosUpdate = positionInfo.TimeUpdate();
                         PrintFormat("PosTypeMod: Sell | Pos: %g, | Bid: %g | LastBarClose: %g | SellSL: %g | SLCrnt: %g ", tix, bid,
                         NormalizeDouble(iClose(sym, PERIOD_D1, 1), _Digits), SellSl, positionInfo.StopLoss() );
