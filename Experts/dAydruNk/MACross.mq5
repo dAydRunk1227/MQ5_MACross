@@ -4,12 +4,13 @@
 //|                                                                  |
 //+------------------------------------------------------------------+
 #property copyright "dAydrunk"
-#property version   "3.20"
+#property version   "3.21"
 /* 
   To-Do:
     - 1: - These symbols crash the test Error 4801(I think-dont remember when I wrote this) (not sure why this occurs. Looks like data is avaiable): EURGBP,GBPJPY,GBPUSD,USDJPY,EURUSD
     - 2: - Update running order SL to trail so it cant take out profits from ATR TP close. 
   VERSION HISTORY 
+    - V3.21(25-0504) Limit On tick to new bars only
     - V3.20(24-0106) Relocate variables to fit more logically into trade inputs in user interface
                         Add user input for leading profit. Modify trailing stop mechanism to include Take profit instead of forcing out at stoploss 
     - V3.13(24-0106) Reformat checkForOPenSignal function. Break signal logic out into buy and sell function check functions.  Use switch to reduce if statments 
@@ -195,13 +196,18 @@
             sTestStats StestStats;
         // Position Info
             struct sPos {
-                double      tp;
-                int         symbolLoop;
-                long        posID;
-                datetime    lastPosUpdate;
-                bool        isTrailing;          // flag to control tp updating after partial position close
+                double     tp;               // Calculates tp at order open. Used so only one order can be open and scale out is possible.
+                int        symbolLoop;       // Stores index for symbol
+                long       posID;            // Order position ID
+                datetime   lastPosUpdate;    // Stores last order position change so trailing stop doesnt work on same bar
+                bool       isTrailing;       // flag to control tp updating after partial position close
+                datetime   lastBar;          // stores previous bar time, initialized OnInit.
                 };
-
+        // General
+            struct sIsNewBar {     // Stores symbol and barTime
+               datetime   cBar;    // Stores current bar time
+               string     sym;     // Stores Symbol associated with current bar
+               };
     // -- -- Arrays -- -- //
         // All symbols
             ulong    OpenTradeOrderTicket[];    //To store 'order' ticket for trades
@@ -216,6 +222,8 @@
             sOrdersData ordersData[];              // Array to store sOrderData structure for write to file
             sDealsData  dealsData[];               // Array to store sDealData structure for write to file
             sPos        bsPos[];                   // Array to store order info for checking if orders need update
+        // General Use
+            sIsNewBar   bsIsNewBar[];              // Stores bar date
     // -- -- Variables -- -- //
         // -- -- Common Variables -- -- //
             input int   iMagic;                 //  Magic Number
@@ -356,8 +364,10 @@
                 
                 Print("All arrays sized to accomodate ", NumberOfTradeableSymbols, " symbols");
             // INITIALIZE ARRAYS
-                for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+                for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++) {
                     OpenTradeOrderTicket[SymbolLoop] = 0;
+                    isNewBarInit(SymbolLoop);
+                   }
             // INSTANTIATE INDICATOR HANDLES
                 if(!SetUpIndicatorHandles())
                     return(INIT_FAILED); 
@@ -519,6 +529,7 @@
         void ResizeCoreArrays() {
             ArrayResize(OpenTradeOrderTicket, NumberOfTradeableSymbols);
             ArrayResize(bsPos, 0);
+            ArrayResize(bsIsNewBar, NumberOfTradeableSymbols);
             // Add other trade arrays here as needed
             }
         void ResizeIndicatorHandleArrays()  {
@@ -1201,7 +1212,14 @@
             return ( bMAFast[1] >= bMALong[1] && bMAFast[0] <= bMALong[0] ) ||
                    ( bMAFast[0] <= bMALong[0] && bMASlow[0] <= bMALong[0] &&
                      bMAFast[1] > bMASlow[1] && bMAFast[0] < bMASlow[0]);
+            }        
+        void isNewBarInit(int symbolLoop) {            
+            sIsNewBar x;
+            x.sym = SymbolArray[symbolLoop];
+            x.cBar = iTime(SymbolArray[symbolLoop], PERIOD_D1,0);
+            bsIsNewBar[symbolLoop] = x;
             }
+          //  bool isNewBar(int symbolLoop) { }
     // -- -- Template Functions -- -- //    
         /*
         string Check[INDICATOR]OpenSignalStatus(int SymbolLoop, string& signalDiagnosticMetrics)   {

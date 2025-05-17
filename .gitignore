@@ -1,9 +1,8 @@
+Experts/Advisors/
+Experts/Examples/
+Experts/Free Robots/
+Experts/TestGenerate/
 Framework EA/
-.vscode/
-*.log
-.DS_Store
-*.ex5
-AllSymbolsSample.mq5
 Files/
 Images/
 Include/Arrays/
@@ -18,11 +17,6 @@ Include/Graphics/
 Include/Math/
 Include/OpenCL/
 Include/WinAPI/
-Object.mqh
-smoothalgorithms.mqh
-VirtualKeys.mqh
-MovingAverages.mqh
-MyInclude 1.15.mqh
 Indicators/
 Libraries/
 Logs/
@@ -30,8 +24,14 @@ Profiles/
 Scripts/
 Services/
 Shared Projects/
+.DS_Store
+AllSymbolsSample.mq5
+Object.mqh
+smoothalgorithms.mqh
+VirtualKeys.mqh
+MovingAverages.mqh
+MyInclude 1.15.mqh
+.vscode/
+*.log
+*.ex5
 *.dat
-Experts/Advisors/
-Experts/Examples/
-Experts/Free Robots/
-Experts/TestGenerate/
